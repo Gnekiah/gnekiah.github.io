@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  
+  <title>FIOS 调度器实现 | Gnekiah&#39;s Serenice</title>
+  <meta name="description" content="Just write something casually.">
+  <meta name="keywords" content="">
+  <meta name="HandheldFriendly" content="True">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="核心数据结构分析fios 队列结构：123456struct fios_queue &amp;#123;    pid_t pid;                  // 进程的pid    struct rb_node fiosq_node;  // 将fios queue插入到fios rb-tree，主要用于在dispatch阶段，快速的取出下一个要被处理的fios queue    struct">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FIOS 调度器实现">
+<meta property="og:url" content="http://spiral.xxiong.me/2018/12/05/FIOS-scheduler-2/index.html">
+<meta property="og:site_name" content="Gnekiah&#39;s Serenice">
+<meta property="og:description" content="核心数据结构分析fios 队列结构：123456struct fios_queue &amp;#123;    pid_t pid;                  // 进程的pid    struct rb_node fiosq_node;  // 将fios queue插入到fios rb-tree，主要用于在dispatch阶段，快速的取出下一个要被处理的fios queue    struct">
+<meta property="og:locale" content="default">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/4038320473.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/2168694059.jpg">
+<meta property="og:updated_time" content="2018-12-05T03:24:23.791Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="FIOS 调度器实现">
+<meta name="twitter:description" content="核心数据结构分析fios 队列结构：123456struct fios_queue &amp;#123;    pid_t pid;                  // 进程的pid    struct rb_node fiosq_node;  // 将fios queue插入到fios rb-tree，主要用于在dispatch阶段，快速的取出下一个要被处理的fios queue    struct">
+<meta name="twitter:image" content="http://blog.xxiong.me/usr/uploads/2018/12/4038320473.jpg">
+  
+  
+    <link rel="icon" href="http://www.xxiong.me/favicon.png">
+  
+
+	<script src="https://use.typekit.net/eyf3hir.js"></script>
+  <script>try{Typekit.load({ async: false });}catch(e){}</script>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    function setLoadingBarProgress(num) {
+      document.getElementById('loading-bar').style.width=num+"%";
+    }
+  </script>
+  
+
+</head>
+</html>
+<body>
+  
+  <div id="loading-bar-wrapper">
+  <div id="loading-bar"></div>
+</div>
+
+  <script>setLoadingBarProgress(20)</script>
+  
+  <div id="site-wrapper">
+    
+    <header id="header">
+	<div id="header-wrapper" class="clearfix">
+		<a id="logo" href="/">
+			<img src="/images/logo.png">
+			<span id="site-desc">
+			  很随便的，写点儿东西。
+      </span>
+		</a>
+		<button id="site-nav-switch">
+	    <span class="icon icon-menu"></span>
+	  </button>
+	</div>
+	<aside id="site-menu">
+  	<nav>
+  		
+        <a href="/" class="nav-index nav">
+          首页
+        </a>
+      
+        <a href="/archives" class="nav-archives nav">
+          目录
+        </a>
+      
+        <a href="http://blog.xxiong.me/" class="nav-blog nav">
+          博客
+        </a>
+      
+        <a href="http://blog.xxiong.me/about.html" class="nav-about nav">
+          关于
+        </a>
+      
+        <a href="http://www.xxiong.me" class="nav-home nav">
+          主页
+        </a>
+      
+    </nav>
+	</aside>
+</header>
+    <script>setLoadingBarProgress(40);</script>
+    
+    <main id="main" role="main">
+      <article id="post-FIOS-scheduler-2" class="post article white-box article-type-post" itemscope="" itemprop="blogPost">
+	<h2 class="title">
+  	<a href="/2018/12/05/FIOS-scheduler-2/">
+    	FIOS 调度器实现
+    </a>
+  </h2>
+	<time>
+	  Dec 5, 2018
+	</time>
+	<section class="content">
+  	<div class="article-entry" itemprop="articleBody">
+    	<h2 id="核心数据结构分析"><a href="#核心数据结构分析" class="headerlink" title="核心数据结构分析"></a>核心数据结构分析</h2><p>fios 队列结构：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> &#123;</span></span><br><span class="line">    <span class="keyword">pid_t</span> pid;                  <span class="comment">// 进程的pid</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_node</span> <span class="title">fiosq_node</span>;</span>  <span class="comment">// 将fios queue插入到fios rb-tree，主要用于在dispatch阶段，快速的取出下一个要被处理的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_node</span> <span class="title">pid_node</span>;</span>    <span class="comment">// 将fios queue插入到pid rb-tree，主要用于在插入请求add request阶段，能够快速的通过进程pid找到要插入的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_root</span> <span class="title">rq_list</span>;</span>     <span class="comment">// 组织请求</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span> <span class="title">fifo</span>;</span>      <span class="comment">// 为了确保不会出现请求饥饿</span></span><br></pre></td></tr></table></figure></p>
+<p>fios 调度器实例结构<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">fios_data</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">request_queue</span> *<span class="title">queue</span>;</span>     <span class="comment">// 指向驱动的queue，dispatch阶段时插入</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_root</span> <span class="title">fiosq_list</span>;</span>       <span class="comment">// 用于dispatch时快速查找fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_root</span> <span class="title">pid_list</span>;</span>         <span class="comment">// 用于add request阶段快速查找fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> *<span class="title">active_fiosq</span>;</span> <span class="comment">// 当前正在进行dispatch的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> <span class="title">async_fiosq</span>;</span>   <span class="comment">// 存放异步请求的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> <span class="title">oom_fiosq</span>;</span>     <span class="comment">// 当无法分配新queue时，将请求放入其中</span></span><br><span class="line">    <span class="keyword">int</span> fios_alpha;                  <span class="comment">// IO anticipation的参数</span></span><br><span class="line">    u64 fios_tsrv;                   <span class="comment">// IO anticipation的参数</span></span><br><span class="line">    u64 fios_tsrv_nr;                <span class="comment">// IO anticipation的参数</span></span><br><span class="line">    u64 fios_tsrv_start;</span><br><span class="line">    u64 fios_tsrv_sum;</span><br><span class="line">    <span class="keyword">bool</span> fios_on_anti;               <span class="comment">// 用于标记当前是否正处于anticipation的状态中</span></span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="add-request-的过程"><a href="#add-request-的过程" class="headerlink" title="add request 的过程"></a>add request 的过程</h2><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4038320473.jpg" alt="20181130202363.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="dispatch-的过程"><a href="#dispatch-的过程" class="headerlink" title="dispatch 的过程"></a>dispatch 的过程</h2><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2168694059.jpg" alt="20181130202364.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="trace-的相关补充"><a href="#trace-的相关补充" class="headerlink" title="trace 的相关补充"></a>trace 的相关补充</h2><ol>
+<li><p>切换调度器</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">echo</span> <span class="string">"fios"</span> &gt; /sys/block/sda/queue/scheduler</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>查看调度器</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cat /sys/block/sda/queue/scheduler</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>随机读</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/tmp/test_randread -direct=1 -iodepth 1 -thread \</span><br><span class="line">    -rw=randread -ioengine=psync -bs=16k -size=2G -numjobs=10 \</span><br><span class="line">    -runtime=60 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>顺序读</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread -rw=<span class="built_in">read</span> \</span><br><span class="line">    -ioengine=psync -bs=16k -size=2G -numjobs=10 -runtime=60 \</span><br><span class="line">    -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>随机写</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread \</span><br><span class="line">    -rw=randwrite -ioengine=psync -bs=16k -size=2G \</span><br><span class="line">    -numjobs=10 -runtime=60 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>顺序写</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread \</span><br><span class="line">    -rw=write -ioengine=psync -bs=16k -size=2G -numjobs=10 \</span><br><span class="line">    -runtime=60 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>混合随机读写</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread -rw=randrw \</span><br><span class="line">    -rwmixread=70 -ioengine=psync -bs=16k -size=2G -numjobs=10 \</span><br><span class="line">    -runtime=60 -group_reporting -name=mytest -ioscheduler=noop</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<hr>
+<h2 id="相关说明"><a href="#相关说明" class="headerlink" title="相关说明"></a>相关说明</h2><h4 id="参数"><a href="#参数" class="headerlink" title="参数"></a>参数</h4><table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参数解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>filename=/dev/sdb1</td>
+<td>测试文件名称，通常选择需要测试的盘的data目录。</td>
+</tr>
+<tr>
+<td>direct=1</td>
+<td>测试过程绕过机器自带的buffer。使测试结果更真实。</td>
+</tr>
+<tr>
+<td>rw=randwrite</td>
+<td>测试随机写的I/O</td>
+</tr>
+<tr>
+<td>rw=randrw</td>
+<td>测试随机写和读的I/O</td>
+</tr>
+<tr>
+<td>bs=16k</td>
+<td>单次io的块文件大小为16k</td>
+</tr>
+<tr>
+<td>bsrange=512-2048</td>
+<td>同上，提定数据块的大小范围</td>
+</tr>
+<tr>
+<td>size=5g</td>
+<td>本次的测试文件大小为5g，以每次4k的io进行测试。</td>
+</tr>
+<tr>
+<td>numjobs=30</td>
+<td>本次的测试线程为30.</td>
+</tr>
+<tr>
+<td>runtime=1000</td>
+<td>测试时间为1000秒，如果不写则一直将5g文件分4k每次写完为止。</td>
+</tr>
+<tr>
+<td>ioengine=psync</td>
+<td>io引擎使用pync方式</td>
+</tr>
+<tr>
+<td>rwmixwrite=30</td>
+<td>在混合读写的模式下，写占30%</td>
+</tr>
+<tr>
+<td>group_reporting</td>
+<td>关于显示结果的，汇总每个进程的信息。</td>
+</tr>
+<tr>
+<td>lockmem=1g</td>
+<td>只使用1g内存进行测试。</td>
+</tr>
+<tr>
+<td>zero_buffers</td>
+<td>用0初始化系统buffer。</td>
+</tr>
+<tr>
+<td>nrfiles=8</td>
+<td>每个进程生成文件的数量。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="trace-的读写模式"><a href="#trace-的读写模式" class="headerlink" title="trace 的读写模式"></a>trace 的读写模式</h4><table>
+<thead>
+<tr>
+<th>模式</th>
+<th>模式解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>read</td>
+<td>顺序读</td>
+</tr>
+<tr>
+<td>write</td>
+<td>顺序写</td>
+</tr>
+<tr>
+<td>rw,readwrite</td>
+<td>顺序混合读写</td>
+</tr>
+<tr>
+<td>randwrite</td>
+<td>随机写</td>
+</tr>
+<tr>
+<td>randread</td>
+<td>随机读</td>
+</tr>
+<tr>
+<td>randrw</td>
+<td>随机混合读写</td>
+</tr>
+</tbody>
+</table>
+<h4 id="fio-测试的输出结果"><a href="#fio-测试的输出结果" class="headerlink" title="fio 测试的输出结果"></a>fio 测试的输出结果</h4><table>
+<thead>
+<tr>
+<th>输出</th>
+<th>输出解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>io</td>
+<td>总的输入输出量</td>
+</tr>
+<tr>
+<td>bw</td>
+<td>带宽 KB/s</td>
+</tr>
+<tr>
+<td>iops</td>
+<td>每秒钟的IO数</td>
+</tr>
+<tr>
+<td>runt</td>
+<td>总运行时间</td>
+</tr>
+<tr>
+<td>lat (msec)</td>
+<td>延迟(毫秒)</td>
+</tr>
+<tr>
+<td>msec</td>
+<td>毫秒</td>
+</tr>
+<tr>
+<td>usec</td>
+<td>微秒</td>
+</tr>
+</tbody>
+</table>
+<p>（完）</p>
+
+  	</div>
+
+	  <div class="article-tags tags">
+		  
+	  </div>
+	</section>
+</article>
+
+
+
+
+      <script>setLoadingBarProgress(60);</script>
+    </main>
+    
+    <footer id="footer" class="clearfix">
+  
+  
+
+	<div class="social-wrapper">
+  	
+      
+        <a href="mailto:root@xxiong.me" class="social email" target="_blank" rel="external">
+          <span class="icon icon-email"></span>
+        </a>
+      
+        <a href="https://github.com/gnekiah" class="social github" target="_blank" rel="external">
+          <span class="icon icon-github"></span>
+        </a>
+      
+        <a href="https://twitter.com/gnekiah" class="social twitter" target="_blank" rel="external">
+          <span class="icon icon-twitter"></span>
+        </a>
+      
+    
+  </div>
+  
+  <div>Theme <span class="codename">Typescript</span> designed by <a href="http://rakugaki.me/" target="_blank">Art Chen</a>.</div>
+  <div>&copy; <a href="/">Gnekiah&#39;s Serenice</a></div>
+  
+</footer>
+
+
+    <script>setLoadingBarProgress(80);</script>
+    
+  </div>
+
+  
+
+
+
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script>window.jQuery || document.write('<script src="/js/jquery.min.js"><\/script>')</script>
+
+<script src="/js/jquery.fitvids.js"></script>
+<script>
+	var GOOGLE_CUSTOM_SEARCH_API_KEY = "";
+	var GOOGLE_CUSTOM_SEARCH_ENGINE_ID = "";
+	var ALGOLIA_API_KEY = "";
+	var ALGOLIA_APP_ID = "";
+	var ALGOLIA_INDEX_NAME = "";
+  var AZURE_SERVICE_NAME = "";
+  var AZURE_INDEX_NAME = "";
+  var AZURE_QUERY_KEY = "";
+  var BAIDU_API_ID = "";
+  var SEARCH_SERVICE = "google";
+</script>
+<script src="/js/search.js"></script>
+<script src="/js/app.js"></script>
+
+
+  <script>setLoadingBarProgress(100);</script>
+  
+</body>
+</html>

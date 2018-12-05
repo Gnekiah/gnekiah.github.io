@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  
+  <title>Femu 源码简析与测试环境配置 | Gnekiah&#39;s Serenice</title>
+  <meta name="description" content="Just write something casually.">
+  <meta name="keywords" content="">
+  <meta name="HandheldFriendly" content="True">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="Femu 来自于 fast-18 上发布的一篇论文The CASE of FEMU: Cheap, Accurate, Scalable and Extensible Flash Emulator1。首先 Femu 基于 Qemu 虚拟机实现的，在 Qemu 虚拟机中，对模拟 nvme 的模块进行了部分扩展，以支持更加高级别的针对 Lightnvm 的仿真功能。与原生的 Qemu-nvme 相比，">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Femu 源码简析与测试环境配置">
+<meta property="og:url" content="http://spiral.xxiong.me/2018/12/05/Femu-source-environment-build/index.html">
+<meta property="og:site_name" content="Gnekiah&#39;s Serenice">
+<meta property="og:description" content="Femu 来自于 fast-18 上发布的一篇论文The CASE of FEMU: Cheap, Accurate, Scalable and Extensible Flash Emulator1。首先 Femu 基于 Qemu 虚拟机实现的，在 Qemu 虚拟机中，对模拟 nvme 的模块进行了部分扩展，以支持更加高级别的针对 Lightnvm 的仿真功能。与原生的 Qemu-nvme 相比，">
+<meta property="og:locale" content="default">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/3841775662.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/417258747.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/2558966397.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/1939032795.jpg">
+<meta property="og:updated_time" content="2018-12-05T03:20:17.103Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Femu 源码简析与测试环境配置">
+<meta name="twitter:description" content="Femu 来自于 fast-18 上发布的一篇论文The CASE of FEMU: Cheap, Accurate, Scalable and Extensible Flash Emulator1。首先 Femu 基于 Qemu 虚拟机实现的，在 Qemu 虚拟机中，对模拟 nvme 的模块进行了部分扩展，以支持更加高级别的针对 Lightnvm 的仿真功能。与原生的 Qemu-nvme 相比，">
+<meta name="twitter:image" content="http://blog.xxiong.me/usr/uploads/2018/12/3841775662.jpg">
+  
+  
+    <link rel="icon" href="http://www.xxiong.me/favicon.png">
+  
+
+	<script src="https://use.typekit.net/eyf3hir.js"></script>
+  <script>try{Typekit.load({ async: false });}catch(e){}</script>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    function setLoadingBarProgress(num) {
+      document.getElementById('loading-bar').style.width=num+"%";
+    }
+  </script>
+  
+
+</head>
+</html>
+<body>
+  
+  <div id="loading-bar-wrapper">
+  <div id="loading-bar"></div>
+</div>
+
+  <script>setLoadingBarProgress(20)</script>
+  
+  <div id="site-wrapper">
+    
+    <header id="header">
+	<div id="header-wrapper" class="clearfix">
+		<a id="logo" href="/">
+			<img src="/images/logo.png">
+			<span id="site-desc">
+			  很随便的，写点儿东西。
+      </span>
+		</a>
+		<button id="site-nav-switch">
+	    <span class="icon icon-menu"></span>
+	  </button>
+	</div>
+	<aside id="site-menu">
+  	<nav>
+  		
+        <a href="/" class="nav-index nav">
+          首页
+        </a>
+      
+        <a href="/archives" class="nav-archives nav">
+          目录
+        </a>
+      
+        <a href="http://blog.xxiong.me/" class="nav-blog nav">
+          博客
+        </a>
+      
+        <a href="http://blog.xxiong.me/about.html" class="nav-about nav">
+          关于
+        </a>
+      
+        <a href="http://www.xxiong.me" class="nav-home nav">
+          主页
+        </a>
+      
+    </nav>
+	</aside>
+</header>
+    <script>setLoadingBarProgress(40);</script>
+    
+    <main id="main" role="main">
+      <article id="post-Femu-source-environment-build" class="post article white-box article-type-post" itemscope="" itemprop="blogPost">
+	<h2 class="title">
+  	<a href="/2018/12/05/Femu-source-environment-build/">
+    	Femu 源码简析与测试环境配置
+    </a>
+  </h2>
+	<time>
+	  Dec 5, 2018
+	</time>
+	<section class="content">
+  	<div class="article-entry" itemprop="articleBody">
+    	<p>Femu 来自于 fast-18 上发布的一篇论文<a href="https://www.usenix.org/conference/fast18/presentation/li" target="_blank" rel="noopener">The CASE of FEMU: Cheap, Accurate, Scalable and Extensible Flash Emulator</a><a href="https://www.usenix.org/conference/fast18/presentation/li" target="_blank" rel="noopener">1</a>。首先 Femu 基于 Qemu 虚拟机实现的，在 Qemu 虚拟机中，对模拟 nvme 的模块进行了部分扩展，以支持更加高级别的针对 Lightnvm 的仿真功能。与原生的 Qemu-nvme 相比，Femu 的扩展主要集中在延迟仿真上。</p>
+<hr>
+<h2 id="Qemu-nvme-简介"><a href="#Qemu-nvme-简介" class="headerlink" title="Qemu-nvme 简介"></a>Qemu-nvme 简介</h2><p>Qemu 与宿主机/客户机系统的示意图如下，Qemu 是运行在宿主机之上的一个应用程序，在这个应用程序中，虚拟出一个硬件平台，例如 x86 架构或 arm 架构。在这之上再运行客户机系统，也就是跑在虚拟机上的操作系统。Qemu 模拟硬件平台包含很多东西，其中就有我们关注的块设备模拟，即 NVMe 设备。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3841775662.jpg" alt="20181130202324.jpg"><br>!!!<br></center><br>!!!</p>
+<p>Nvme 模块需要实现下面的函数——read 和 write：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> MemoryRegionOps nvme_mmio_ops = &#123;</span><br><span class="line">    .read = nvme_mmio_read,</span><br><span class="line">    .write = nvme_mmio_write,</span><br><span class="line">    .endianness = DEVICE_LITTLE_ENDIAN,</span><br><span class="line">    .impl = &#123;</span><br><span class="line">        .min_access_size = <span class="number">2</span>,</span><br><span class="line">        .max_access_size = <span class="number">8</span>,</span><br></pre></td></tr></table></figure></p>
+<p>这两个函数是对于 Qemu 而言的块设备模块的入口（在这里是扩展了 femu-oc 的 nvme 模块）。其中 read 负责读取寄存器的值，write 则负责进行具体的请求处理细节并进行写寄存器的值。写寄存器函数 nvme_mmio_write() 的功能大致如下图所示，包含两个类型的命令操作——Admin IO 和普通 IO。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/417258747.jpg" alt="20181130202325.jpg"><br>!!!<br></center><br>!!!<br>Admin IO 的操作与 Lightnvm 驱动相关层的操作一一对应，分别是获取设备 Geometry 信息、获取映射表、获取坏块表以及更新坏块表。通用 IO 操作也与 Lightnvm 驱动相关层一一对应，包括了读、写、擦三个操作。下面介绍这两种类型的延迟仿真方式。</p>
+<hr>
+<h2 id="Admin-IO-的延迟仿真"><a href="#Admin-IO-的延迟仿真" class="headerlink" title="Admin IO 的延迟仿真"></a>Admin IO 的延迟仿真</h2><p>Femu 基于 Qemu-nvme 所做的修改主要就是一个部分——延迟仿真。Admin IO 的延迟仿真示意图如下图所示，首先从 Submission Queue 中取出一条请求，然后执行这条请求，执行完毕后，将请求插入到一个处理完成的队列中，然后更新 CQ（Completion Queue）定时器时间（当前时间+500纳秒），之后更新 SQ（Submission Queue）定时器（当前时间+10000纳秒）。CQ 定时器触发后，将执行结果插入到 Completion Queue 后，按下 CQ Doorbell。另一边 SQ 定时器触发后，将进行下一个请求的处理任务。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2558966397.jpg" alt="20181130202326.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="General-IO-的延迟仿真"><a href="#General-IO-的延迟仿真" class="headerlink" title="General IO 的延迟仿真"></a>General IO 的延迟仿真</h2><p>General IO 的延迟仿真示意图如下所示，与 Admin IO 相似，首先从 Submission Queue 中取出一条请求，然后执行这条请求，执行完毕后，与 Admin IO 不同的一点在于：General IO 的执行流程包含了读、写某个芯片、数据传输等操作的延迟，因此必须要计算执行操作所需要的时间。计算出操作所需时间后，将请求插入到一个处理完成的队列中，然后更新 CQ（Completion Queue）定时器时间（当前时间 +500 纳秒），之后更新 SQ（Submission Queue）定时器（当前时间 + 当前 IO 操作所需要的时间）。CQ 定时器触发后，将执行结果插入到 Completion Queue 后，按下 CQ Doorbell。另一边 SQ 定时器触发后，将进行下一个请求的处理任务。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1939032795.jpg" alt="20181130202327.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="本文所用的环境"><a href="#本文所用的环境" class="headerlink" title="本文所用的环境"></a>本文所用的环境</h2><p>Femu 的作者已将启动命令以脚本的形式保存，下面介绍 Femu 安装所需要的环境以及运行的步骤。</p>
+<ol>
+<li>Python 2.7</li>
+<li>Ubuntu 18.04</li>
+<li>Linux 4.14</li>
+</ol>
+<p>此外需要额外安装的包与软件已经集合到 femu/femu-scripts/pkgdep.sh 脚本，直接执行即可。</p>
+<hr>
+<h2 id="Femu-安装过程记录"><a href="#Femu-安装过程记录" class="headerlink" title="Femu 安装过程记录"></a>Femu 安装过程记录</h2><ol>
+<li><p>git 拷贝一份 Femu 的源码</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">git <span class="built_in">clone</span> git@github.com:ucare-uchicago/femu.git</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>进入 femu/build-femu，如果没有这个文件夹，可以自行在同级目录下面创建</p>
+</li>
+<li><p>将 femu/femu-scripts 文件夹下面的所有文件复制到 build-femu 文件夹下。实际上不需要全部复制，在 femu/femu-scripts/femu-copy-scripts.sh 文件中制定了需要复制的文件，所以实际上只需要复制 femu-copy-scripts.sh 这个脚本到 build-femu 文件夹下，然后执行即可。另一种快捷的方式是直接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cp ../femu-scripts/*.sh ../build-femu</span><br><span class="line">cp ../femu-scripts/ftk ../build-femu</span><br><span class="line">cp ../femu-scripts/vssd1.conf ../build-femu</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>运行 femu-compile.sh</p>
+</li>
+<li><p>建议创建一个格式为 qcow2 的镜像文件（其他格式的镜像也可以，qcow2 是动态扩展空间。其他格式在启动 qemu 的时候改一下对应命令的格式就可），这个文件相当于我们的磁盘设备，创建好之后给这个镜像（磁盘）安装系统。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">qemu-img create –f qcow2 u14s.qcow2 20G</span><br><span class="line">qemu-system-x86_64 –m 2G –<span class="built_in">enable</span>-kvm u14s.qcow2 –cdrom ubuntu18.04-beta2-desktop-amd64.iso</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通过配置当前目录下面的 conf 文件可以配置 SSD 的不同参数，仿真延时可以配置不同的 channel 和更多的具体的参数；例如：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">PAGE_SIZE               4096</span><br><span class="line">PAGE_NB                 256</span><br><span class="line">SECTOR_SIZE             512</span><br><span class="line">FLASH_NB                64</span><br><span class="line">BLOCK_NB                16</span><br><span class="line">PLANES_PER_FLASH        1</span><br><span class="line">LOG_RAND_BLOCK_NB       0</span><br><span class="line">LOG_SEQ_BLOCK_NB        0</span><br><span class="line">REG_WRITE_DELAY         40000</span><br><span class="line">CELL_PROGRAM_DELAY      800000</span><br><span class="line">REG_READ_DELAY          60000</span><br><span class="line">CELL_READ_DELAY         40000</span><br><span class="line">BLOCK_ERASE_DELAY       3000000</span><br><span class="line">CHANNEL_SWITCH_DELAY_R  16</span><br><span class="line">CHANNEL_SWITCH_DELAY_W  33</span><br><span class="line">IO_PARALLELISM          0</span><br><span class="line">WRITE_BUFFER_FRAME_NB   2048</span><br><span class="line">READ_BUFFER_FRAME_NB    2048</span><br><span class="line">CACHE_IDX_SIZE          10</span><br><span class="line">CHANNEL_NB              8</span><br><span class="line">OVP                     0</span><br><span class="line">GC_MODE                 2</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通过 qemu 启动的我们的系统时，可以通过 qemu 给系统加载对应的设备和驱动，并且配置不同的参数（每次启动系统都通过 ./qemu-img 来读取配置文件创建对应的设备镜像 raw），例如可以从脚本 femu/femu-scripts/run-whitebox.sh 中来看到，所以运行的时候只需要运行这个集合命令集的 shell 脚本</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">./qemu-img create -f raw <span class="variable">$NVMEIMGF</span> <span class="variable">$NVMEIMGSZ</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>进入系统需要挂载设备，首先找到设备名字和位置，通过 lsblk 可以看到还未格式化和挂载的创建 nvme 设备</p>
+</li>
+<li><p>我们可以把这个磁盘挂载到 /tmp/ 下。首先创建一个文件夹 mkdir ene_test，然后格式化设备为 ext4 格式，mkfs.ext4 /dev/nvme0n1，接下来将格式化的设备挂载到我们对应的文件夹 ene_nvme 下：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mount /dev/nvme0n1 ene_nvme/</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>到此可以通过 df –h 看到我们自己的设备，它在 dev/nvme0n1 下，被挂载到 /tmp/ene_test/。我们可以进入挂载的文件夹下面对这个设备进行各种磁盘操作了。</p>
+</li>
+</ol>
+<p>（完）</p>
+<hr>
+<h2 id="参考文献"><a href="#参考文献" class="headerlink" title="参考文献"></a>参考文献</h2><p><a href="https://www.usenix.org/conference/fast18/presentation/li" target="_blank" rel="noopener">1</a> Li H, Hao M, Tong M H, et al. The case of FEMU: cheap, accurate, scalable and extensible flash emulator[C]//Proc. of 16th USENIX Conference on File and Storage Technologies (FAST). 2018: 83-90.</p>
+
+  	</div>
+
+	  <div class="article-tags tags">
+		  
+	  </div>
+	</section>
+</article>
+
+
+
+
+      <script>setLoadingBarProgress(60);</script>
+    </main>
+    
+    <footer id="footer" class="clearfix">
+  
+  
+
+	<div class="social-wrapper">
+  	
+      
+        <a href="mailto:root@xxiong.me" class="social email" target="_blank" rel="external">
+          <span class="icon icon-email"></span>
+        </a>
+      
+        <a href="https://github.com/gnekiah" class="social github" target="_blank" rel="external">
+          <span class="icon icon-github"></span>
+        </a>
+      
+        <a href="https://twitter.com/gnekiah" class="social twitter" target="_blank" rel="external">
+          <span class="icon icon-twitter"></span>
+        </a>
+      
+    
+  </div>
+  
+  <div>Theme <span class="codename">Typescript</span> designed by <a href="http://rakugaki.me/" target="_blank">Art Chen</a>.</div>
+  <div>&copy; <a href="/">Gnekiah&#39;s Serenice</a></div>
+  
+</footer>
+
+
+    <script>setLoadingBarProgress(80);</script>
+    
+  </div>
+
+  
+
+
+
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script>window.jQuery || document.write('<script src="/js/jquery.min.js"><\/script>')</script>
+
+<script src="/js/jquery.fitvids.js"></script>
+<script>
+	var GOOGLE_CUSTOM_SEARCH_API_KEY = "";
+	var GOOGLE_CUSTOM_SEARCH_ENGINE_ID = "";
+	var ALGOLIA_API_KEY = "";
+	var ALGOLIA_APP_ID = "";
+	var ALGOLIA_INDEX_NAME = "";
+  var AZURE_SERVICE_NAME = "";
+  var AZURE_INDEX_NAME = "";
+  var AZURE_QUERY_KEY = "";
+  var BAIDU_API_ID = "";
+  var SEARCH_SERVICE = "google";
+</script>
+<script src="/js/search.js"></script>
+<script src="/js/app.js"></script>
+
+
+  <script>setLoadingBarProgress(100);</script>
+  
+</body>
+</html>

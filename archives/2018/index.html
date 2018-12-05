@@ -105,6 +105,1487 @@
 
   
   <h2 class="title">
+    <a href="/2018/12/05/FIOS-scheduler-2/">
+      FIOS 调度器实现
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <h2 id="核心数据结构分析"><a href="#核心数据结构分析" class="headerlink" title="核心数据结构分析"></a>核心数据结构分析</h2><p>fios 队列结构：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> &#123;</span></span><br><span class="line">    <span class="keyword">pid_t</span> pid;                  <span class="comment">// 进程的pid</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_node</span> <span class="title">fiosq_node</span>;</span>  <span class="comment">// 将fios queue插入到fios rb-tree，主要用于在dispatch阶段，快速的取出下一个要被处理的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_node</span> <span class="title">pid_node</span>;</span>    <span class="comment">// 将fios queue插入到pid rb-tree，主要用于在插入请求add request阶段，能够快速的通过进程pid找到要插入的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_root</span> <span class="title">rq_list</span>;</span>     <span class="comment">// 组织请求</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span> <span class="title">fifo</span>;</span>      <span class="comment">// 为了确保不会出现请求饥饿</span></span><br></pre></td></tr></table></figure></p>
+<p>fios 调度器实例结构<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">fios_data</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">request_queue</span> *<span class="title">queue</span>;</span>     <span class="comment">// 指向驱动的queue，dispatch阶段时插入</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_root</span> <span class="title">fiosq_list</span>;</span>       <span class="comment">// 用于dispatch时快速查找fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">rb_root</span> <span class="title">pid_list</span>;</span>         <span class="comment">// 用于add request阶段快速查找fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> *<span class="title">active_fiosq</span>;</span> <span class="comment">// 当前正在进行dispatch的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> <span class="title">async_fiosq</span>;</span>   <span class="comment">// 存放异步请求的fios queue</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">fios_queue</span> <span class="title">oom_fiosq</span>;</span>     <span class="comment">// 当无法分配新queue时，将请求放入其中</span></span><br><span class="line">    <span class="keyword">int</span> fios_alpha;                  <span class="comment">// IO anticipation的参数</span></span><br><span class="line">    u64 fios_tsrv;                   <span class="comment">// IO anticipation的参数</span></span><br><span class="line">    u64 fios_tsrv_nr;                <span class="comment">// IO anticipation的参数</span></span><br><span class="line">    u64 fios_tsrv_start;</span><br><span class="line">    u64 fios_tsrv_sum;</span><br><span class="line">    <span class="keyword">bool</span> fios_on_anti;               <span class="comment">// 用于标记当前是否正处于anticipation的状态中</span></span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="add-request-的过程"><a href="#add-request-的过程" class="headerlink" title="add request 的过程"></a>add request 的过程</h2><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4038320473.jpg" alt="20181130202363.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="dispatch-的过程"><a href="#dispatch-的过程" class="headerlink" title="dispatch 的过程"></a>dispatch 的过程</h2><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2168694059.jpg" alt="20181130202364.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="trace-的相关补充"><a href="#trace-的相关补充" class="headerlink" title="trace 的相关补充"></a>trace 的相关补充</h2><ol>
+<li><p>切换调度器</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">echo</span> <span class="string">"fios"</span> &gt; /sys/block/sda/queue/scheduler</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>查看调度器</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cat /sys/block/sda/queue/scheduler</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>随机读</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/tmp/test_randread -direct=1 -iodepth 1 -thread \</span><br><span class="line">    -rw=randread -ioengine=psync -bs=16k -size=2G -numjobs=10 \</span><br><span class="line">    -runtime=60 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>顺序读</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread -rw=<span class="built_in">read</span> \</span><br><span class="line">    -ioengine=psync -bs=16k -size=2G -numjobs=10 -runtime=60 \</span><br><span class="line">    -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>随机写</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread \</span><br><span class="line">    -rw=randwrite -ioengine=psync -bs=16k -size=2G \</span><br><span class="line">    -numjobs=10 -runtime=60 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>顺序写</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread \</span><br><span class="line">    -rw=write -ioengine=psync -bs=16k -size=2G -numjobs=10 \</span><br><span class="line">    -runtime=60 -group_reporting -name=mytest</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>混合随机读写</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fio -filename=/dev/sdb1 -direct=1 -iodepth 1 -thread -rw=randrw \</span><br><span class="line">    -rwmixread=70 -ioengine=psync -bs=16k -size=2G -numjobs=10 \</span><br><span class="line">    -runtime=60 -group_reporting -name=mytest -ioscheduler=noop</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<hr>
+<h2 id="相关说明"><a href="#相关说明" class="headerlink" title="相关说明"></a>相关说明</h2><h4 id="参数"><a href="#参数" class="headerlink" title="参数"></a>参数</h4><table>
+<thead>
+<tr>
+<th>参数</th>
+<th>参数解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>filename=/dev/sdb1</td>
+<td>测试文件名称，通常选择需要测试的盘的data目录。</td>
+</tr>
+<tr>
+<td>direct=1</td>
+<td>测试过程绕过机器自带的buffer。使测试结果更真实。</td>
+</tr>
+<tr>
+<td>rw=randwrite</td>
+<td>测试随机写的I/O</td>
+</tr>
+<tr>
+<td>rw=randrw</td>
+<td>测试随机写和读的I/O</td>
+</tr>
+<tr>
+<td>bs=16k</td>
+<td>单次io的块文件大小为16k</td>
+</tr>
+<tr>
+<td>bsrange=512-2048</td>
+<td>同上，提定数据块的大小范围</td>
+</tr>
+<tr>
+<td>size=5g</td>
+<td>本次的测试文件大小为5g，以每次4k的io进行测试。</td>
+</tr>
+<tr>
+<td>numjobs=30</td>
+<td>本次的测试线程为30.</td>
+</tr>
+<tr>
+<td>runtime=1000</td>
+<td>测试时间为1000秒，如果不写则一直将5g文件分4k每次写完为止。</td>
+</tr>
+<tr>
+<td>ioengine=psync</td>
+<td>io引擎使用pync方式</td>
+</tr>
+<tr>
+<td>rwmixwrite=30</td>
+<td>在混合读写的模式下，写占30%</td>
+</tr>
+<tr>
+<td>group_reporting</td>
+<td>关于显示结果的，汇总每个进程的信息。</td>
+</tr>
+<tr>
+<td>lockmem=1g</td>
+<td>只使用1g内存进行测试。</td>
+</tr>
+<tr>
+<td>zero_buffers</td>
+<td>用0初始化系统buffer。</td>
+</tr>
+<tr>
+<td>nrfiles=8</td>
+<td>每个进程生成文件的数量。</td>
+</tr>
+</tbody>
+</table>
+<h4 id="trace-的读写模式"><a href="#trace-的读写模式" class="headerlink" title="trace 的读写模式"></a>trace 的读写模式</h4><table>
+<thead>
+<tr>
+<th>模式</th>
+<th>模式解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>read</td>
+<td>顺序读</td>
+</tr>
+<tr>
+<td>write</td>
+<td>顺序写</td>
+</tr>
+<tr>
+<td>rw,readwrite</td>
+<td>顺序混合读写</td>
+</tr>
+<tr>
+<td>randwrite</td>
+<td>随机写</td>
+</tr>
+<tr>
+<td>randread</td>
+<td>随机读</td>
+</tr>
+<tr>
+<td>randrw</td>
+<td>随机混合读写</td>
+</tr>
+</tbody>
+</table>
+<h4 id="fio-测试的输出结果"><a href="#fio-测试的输出结果" class="headerlink" title="fio 测试的输出结果"></a>fio 测试的输出结果</h4><table>
+<thead>
+<tr>
+<th>输出</th>
+<th>输出解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>io</td>
+<td>总的输入输出量</td>
+</tr>
+<tr>
+<td>bw</td>
+<td>带宽 KB/s</td>
+</tr>
+<tr>
+<td>iops</td>
+<td>每秒钟的IO数</td>
+</tr>
+<tr>
+<td>runt</td>
+<td>总运行时间</td>
+</tr>
+<tr>
+<td>lat (msec)</td>
+<td>延迟(毫秒)</td>
+</tr>
+<tr>
+<td>msec</td>
+<td>毫秒</td>
+</tr>
+<tr>
+<td>usec</td>
+<td>微秒</td>
+</tr>
+</tbody>
+</table>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/LightNVM-code-essay/">
+      LightNVM 代码分析总结
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>内核版本：Linux-4.19</p>
+<hr>
+<h2 id="Lightnvm-与-pblk"><a href="#Lightnvm-与-pblk" class="headerlink" title="Lightnvm 与 pblk"></a>Lightnvm 与 pblk</h2><p>Lightnvm 与 pblk 的关系，类似于 linux 块层与 IO 调度器之间的关系。即在 lightnvm 中可以有多种 FTL 的实现，这里 pblk 就是一种 FTL 的实现。Lightnvm 子系统在支持PPA接口的块设备的基础上进行初始化。该模块使内核能够通过内部 nvm_dev 数据结构和 sysfs 等来暴露设备的几何结构信息。通过这种方式，FTL 和用户空间的应用程序可以在使用前就了解到设备的底层信息。此外 Lightnvm 子系统还有一个最重要的功能——管理 target 的划分以及指定用于管理 target 的 FTL。</p>
+<hr>
+<h2 id="Lightnvm-的三层结构"><a href="#Lightnvm-的三层结构" class="headerlink" title="Lightnvm 的三层结构"></a>Lightnvm 的三层结构</h2><p>如下图所示，Lightnvm 被分为三个部分 ③②①。自上而下分别为 FTL、Lightnvm 子系统以及设备驱动程序。Lightnvm 子系统通过将 FTL 提供出来的 make_rq 函数指针替换到块层的 blk_queue_make_request，从而实现直接处理 bio 而不需要经过 IO 调度器。</p>
+<p>当一个 bio 从文件系统发出来后，首先进入 FTL 模块，对应下图中的 ③；在 FTL 中处理完毕后，如果要与设备进行交互，则 FTL 必须要将请求下发到设备。由于 FTL 不知道底层设备类型，故也无法确定设备驱动程序所定义的数据格式，同时也为了确保 Lightnvm 能够对多种不同类型的设备都兼容，因此 Lightnvm 与具体设备驱动之间采取了一个中间件，叫做 Lightnvm 驱动相关层，其功能是将 Lightnvm 所定义的命令格式转换成具体设备驱动程序的命令格式，再提交给对应的驱动程序。由此可知，如果某个设备要使用 Lightnvm 模块，则该设备对应的驱动程序必须要实现上面提到的中间件。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1939970917.jpg" alt="20181130202355.jpg"><br>!!!<br></center><br>!!!</p>
+<p>Lightnvm 与具体设备驱动的中间件如下图示，Lightnvm 有一套通用的命令格式和请求格式，中间层只起到格式转换的作用。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4174733462.jpg" alt="20181130202356.jpg"><br>!!!<br></center><br>!!!</p>
+<p>使用 Lightnvm 的设备驱动程序使内核其他模块能够通过 PPA I/O 接口直接访问设备。设备驱动程序将设备作为传统的 Linux 块设备公开到用户空间，允许应用程序通过 ioctls 与设备进行交互。PPA 地址格式定义见下图：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3526174751.jpg" alt="20181130202357.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="pblk-FTL-实现-的源码分析"><a href="#pblk-FTL-实现-的源码分析" class="headerlink" title="pblk (FTL 实现)的源码分析"></a>pblk (FTL 实现)的源码分析</h2><p>pblk 是对 Lightnvm 中负责具体 FTL 功能的一种实现，在旧版本中还有 rrpc，但是在最新的内核 4.19 版本中，已经移除了 rrpc 的模块，现在只有 pblk 这一种实现。从管理范围的范畴来说，pblk 是负责管理 target 的，一个设备可以切分成多个 target，而每个 target 可以使用不同的 FTL 的具体实现来进行管理。抽象出 target 这一方式，使内核空间模块或用户空间应用程序能够通过高级 I/O 接口（例如由 pblk 提供的块 I/O 接口的标准接口）访问设备，或由自定义 target 提供的为应用程序定制的接口来进行访问。其中，每一个 target 就是一块物理存储设备的抽象，每个 target 可以单独使用一种类型的 FTL 来管理，彼此间独立。pblk 主要的职责是以下几点：</p>
+<ul>
+<li>提供主机侧的写缓冲机制</li>
+<li>实现从主机逻辑地址到设备物理地址的转换</li>
+<li>处理本该由设备进行的垃圾回收</li>
+</ul>
+<hr>
+<h2 id="模块之间的衔接"><a href="#模块之间的衔接" class="headerlink" title="模块之间的衔接"></a>模块之间的衔接</h2><p>从源码的角度分析，将 Lightnvm 插入原生的驱动程序与块层之间，需要解决两个交互点——块层与 Lightnvm 之间的衔接以及 Lightnvm 与驱动程序之间的衔接。这里我们将两个交互点整理成 2 个问题：</p>
+<ol>
+<li>在何处向请求队列注册 make request function 函数</li>
+<li>在何处向请求队列注册 request function 函数</li>
+</ol>
+<p>其中注册 make request 函数是为了将能够直接处理文件系统中的 bio；注册 request 函数则是为了能够将请求发往具体驱动程序。下面分别对每个问题进行源码分析。</p>
+<h4 id="向请求队列注册-pblk-make-rq"><a href="#向请求队列注册-pblk-make-rq" class="headerlink" title="向请求队列注册 pblk_make_rq"></a>向请求队列注册 pblk_make_rq</h4><p>操作系统为每个块设备维护一个 request queue。当一个支持 Lightnvm 的 nvme 设备被识别到后，lightnvm 模块将会为 nvme device driver 创建 target（类比于磁盘的分区），一个 Lightnvm 设备可以划分多个 target（要求划分的 target 的起始 channel 地址对齐，channel 结束地址没有要求），划分 target 的基本单位为 lun，并且不同的 target 可以采用不同的 FTL 的实现（例如 target 1 使用 pblk 管理，target 2 使用 rrpc 管理）。</p>
+<p>这里创建 target 是通过调用函数 nvm_ctl_ioctl 实现的。在该函数中又间接调用了 nvm_create_tgt，其中有一步重要操作如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">tqueue = blk_alloc_queue_node(GFP_KERNEL, dev-&gt;q-&gt;node);</span><br><span class="line">blk_queue_make_request(tqueue, tt-&gt;make_rq);</span><br></pre></td></tr></table></figure></p>
+<p>通过这两段代码，将 pblk 模块的入口函数 pblk_make_rq（即 make request function）插入到内核为该 pblk 对应的 nvme device 分区维护的请求队列中。</p>
+<h4 id="当-IO-请求下来时，如何调用-pblk-make-rq"><a href="#当-IO-请求下来时，如何调用-pblk-make-rq" class="headerlink" title="当 IO 请求下来时，如何调用 pblk_make_rq"></a>当 IO 请求下来时，如何调用 pblk_make_rq</h4><p>当 IO 请求从 block layer 下来后，执行下面的步骤将请求传给 Lightnvm 层。</p>
+<ol>
+<li>当一个请求下来后，首先执行 bio_alloc() 分配一个新的 bio 并初始化 bio 描述符；</li>
+<li>bio 初始化完毕后，内核调用 generic_make_request() 函数；</li>
+<li>在该函数中，调用 bdev_get_queue() 获取与请求的块设备相关的请求队列 rq；</li>
+<li>之后调用 rq-&gt;make_request_fn() 将 bio 请求插入请求队列 rq 中；</li>
+</ol>
+<p>第 4 个步骤的 make_request_fn()（即 pblk_make_rq）在 target 初始化的时候已经插入到该请求队列中，因此调用这一步后就进入 lightnvm 模块中。lightnvm 模块与设备驱动相关的代码位于路径 /drivers/nvme/host/lightnvm.c 中。</p>
+<h4 id="NVMe-向请求队列中注册-nvme-queue-rq"><a href="#NVMe-向请求队列中注册-nvme-queue-rq" class="headerlink" title="NVMe 向请求队列中注册 nvme_queue_rq"></a>NVMe 向请求队列中注册 nvme_queue_rq</h4><p>nvme 为 namespace 初始化 request queue 的操作：</p>
+<ul>
+<li><p>入口函数，其中包含下面这一步操作，用于初始化一个 request queue</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns() &#123;</span><br><span class="line">    ns-&gt;<span class="built_in">queue</span> = blk_mq_init_queue(ctrl-&gt;tagset);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在该函数 (blk_mq_init_queue) 中调用了另一个函数如下，向 request queue 中插入 nvme 的操作函数：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">blk_mq_init_allocated_queue() &#123;</span><br><span class="line">    q-&gt;mq_ops = <span class="built_in">set</span>-&gt;ops;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>其中 nvme 模块的 pci.c 文件中定义了操作入口：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">blk_mq_ops</span> <span class="title">nvme_mq_ops</span> = &#123;</span></span><br><span class="line">    .queue_rq     = nvme_queue_rq,</span><br><span class="line">    .init_request = nvme_init_request,</span><br><span class="line">    .......</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<h4 id="当-lightnvm-处理完后，如何调用-nvme-queue-rq"><a href="#当-lightnvm-处理完后，如何调用-nvme-queue-rq" class="headerlink" title="当 lightnvm 处理完后，如何调用 nvme_queue_rq"></a>当 lightnvm 处理完后，如何调用 nvme_queue_rq</h4><p>当 Lightnvm 中与驱动相关的逻辑执行完成后（从 lightnvm request 生成特定驱动的命令），Lightnvm 的驱动相关层（nvme 中位于 drivers/nvme/host/lightnvm.c）将会调用 blk_execute_rq_nowait() 函数将请求交由通用块层处理。该函数部分代码如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">blk_execute_rq_nowait() &#123;</span><br><span class="line">    <span class="keyword">if</span> (q-&gt;mq_ops) &#123;</span><br><span class="line">        blk_mq_sched_insert_request(rq, at_head, <span class="literal">true</span>, <span class="literal">false</span>, <span class="literal">false</span>);</span><br><span class="line">        <span class="keyword">return</span>;</span><br></pre></td></tr></table></figure></p>
+<p>在 blk_mq_sched_insert_request() 函数中有如下调用关系：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">blk_mq_sched_insert_request() &#123;</span><br><span class="line">    blk_mq_run_hw_queue(hctx, async);</span><br><span class="line">blk_mq_run_hw_queue() &#123;</span><br><span class="line">    __blk_mq_delay_run_hw_queue(hctx, async, <span class="number">0</span>);</span><br><span class="line">__blk_mq_delay_run_hw_queue() &#123;</span><br><span class="line">    __blk_mq_run_hw_queue(hctx);</span><br><span class="line">__blk_mq_run_hw_queue() &#123;</span><br><span class="line">    blk_mq_sched_dispatch_requests(hctx);</span><br><span class="line">blk_mq_sched_dispatch_requests() &#123;</span><br><span class="line">    blk_mq_dispatch_rq_list(q, &amp;rq_list);</span><br><span class="line">blk_mq_dispatch_rq_list() &#123;</span><br><span class="line">    <span class="comment">// 这里调用了nvme模块中的nvme_queue_rq</span></span><br><span class="line">    ret = q-&gt;mq_ops-&gt;queue_rq(hctx, &amp;bd);</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="read"><a href="#read" class="headerlink" title="read"></a>read</h2><p>pblk 的读写过程见下图示，从整体的角度看，读请求和写请求都要首先对 L2P 表进行操作，之后再操作 write buffer。下面分别对 read 和 write 的过程进行详解。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3945780743.jpg" alt="20181130202358.jpg"><br>!!!<br></center><br>!!!<br>read 操作大致可分为三步：</p>
+<ol>
+<li>从 L2P table 查找物理地址；</li>
+<li>从 buffer 中查找该地址，若查找 cache 命中，则从 buffer 中读取；</li>
+<li>如果查找 buffer 未命中，则构造读请求并从设备读取数据。</li>
+</ol>
+<p>如果只有部分请求命中，则要将未命中的请求重新构造成新的请求，再从设备读取。在部分命中的这种情况下，当从设备中读取数据后，需要将 buffer 中的命中的那部分数据与从设备中读取的未命中的数据进行合并，再返回给文件系统。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/896036978.jpg" alt="20181130202359.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="write"><a href="#write" class="headerlink" title="write"></a>write</h2><p>write 操作分为两个部分：</p>
+<ol>
+<li>将文件系统下发的数据写入到 buffer；</li>
+<li>write thread 将数据从 buffer 写入到设备。</li>
+</ol>
+<p>在整个写入的操作中，对 buffer 的操作可以分为两类角色：多个生产者和一个消费者。</p>
+<ul>
+<li>所有的写操作都会先将数据写入到 buffer 中；</li>
+<li>然后由 write thread 将数据写入设备中。下面是这两个部分的具体操作流程。</li>
+</ul>
+<ol>
+<li>写入 buffer 的主要操作如下：<ul>
+<li>判断能否向 buffer 写入请求数据；</li>
+<li>将数据写入到 buffer 中；</li>
+<li>写入数据后，更新 L2P table；</li>
+<li>判断是否需要唤醒 write thread。</li>
+</ul>
+</li>
+<li>从 buffer 写入设备的主要操作：<ul>
+<li>计算要写回的 entries 数量；</li>
+<li>将 entries 添加到 bio 并构造 request；</li>
+<li>向设备提交请求。</li>
+</ul>
+</li>
+</ol>
+<p>下面的流程图展示了向 buffer 中写数据的操作过程。当 write 请求到来时，首先要判断有没有 buffer 足够空间用来进行本次的写请求，如果空间不够，需要触发 write thread，将 buffer 中的数据写回设备中。如果空间足够，就将数据写入到 buffer 中，其中 buffer 中的单位是 entry，大小是 4KB。最后再更新 L2P table。这里在 end io 之前需要判断是否需要唤醒 write thread 将 buffer 中的数据写入到设备。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1745448200.jpg" alt="20181130202360.jpg"><br>!!!<br></center><br>!!!</p>
+<p>write thread 被唤醒的条件有两个：</p>
+<ol>
+<li>被定时器触发；</li>
+<li>buffer 中需要写回到设备的数据量达到了阈值。</li>
+</ol>
+<p>当 write thread 被唤醒后，首先计算 buffer 中需要同步的 entries 的总数，这些是需要写回设备的数据单元。之后将 entries 中的数据添加到 bio，用于向设备发送写请求。这里需要注意，write thread 不需要更新 L2P table，因为这个操作在前半部分的 write to buffer 中已经完成了。</p>
+<hr>
+<h2 id="discard"><a href="#discard" class="headerlink" title="discard"></a>discard</h2><p>discard 的作用是使请求的数据无效化。discard 是针对 L2P table 的操作，只需要将 L2P table 的逻辑地址对应的物理地址设为 empty 就实现了将目标数据无效化的操作。涉及到 discard 的操作如下： </p>
+<ol>
+<li>当 discard 请求发送到来时：</li>
+<li>首先查找 L2P table，找到对应的物理地址；</li>
+<li>之后查找 write buffer；</li>
+<li>如果 cache hit，则直接更新 L2P，将请求的逻辑地址对应的物理地址标记为无效；</li>
+<li>如果 cache miss，则获取请求页地址所在的 line，将其标记为不可用（确保在该地址被无效化之前不会被访问），之后更新 L2P table。<br>!!!<br><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1279183542.jpg" alt="20181130202361.jpg"><br>!!!<br></center><br>!!!</li>
+</ol>
+<hr>
+<h2 id="GC"><a href="#GC" class="headerlink" title="GC"></a>GC</h2><p>GC 能够充分将存储单元利用起来。GC thread 被唤醒的条件有：</p>
+<ol>
+<li>定时器唤醒；</li>
+<li>write thread 主动唤醒 GC thread。</li>
+</ol>
+<p>在 GC thread 被唤醒后，只遍历每个 line，并初始化每个 line 的工作队列。如上图所示，gc full list 中保存的是 lines，只有全部 full 的 line 才会加入 gc full list。停止 gc 的条件是 free blocks 数量达到预设的阈值。GC 是由 line 管理的，内核遍历由 line 中的工作队列组成的工作队列链表，对每一个 line，分别执行 GC 操作。在当前版本的 lightnvm 中，GC 的操作是简单的将数据读出来保存到 write buffer 中。关于擦除块的操作在 write thread 中。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3129676206.jpg" alt="20181130202362.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="Buffer-管理"><a href="#Buffer-管理" class="headerlink" title="Buffer 管理"></a>Buffer 管理</h2><p>Buffer 的相关数据结构如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">pblk_rb_entry</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">ppa_addr</span> <span class="title">cacheline</span>;</span>  <span class="comment">// entry相对于buffer的地址</span></span><br><span class="line">    <span class="keyword">void</span> *data;                 <span class="comment">// 指向数据</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">pblk_w_ctx</span> <span class="title">w_ctx</span>;</span>    <span class="comment">// entry的上下文</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">pblk_w_ctx</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">bio_list</span> <span class="title">bios</span>;</span>       <span class="comment">// 用于回调</span></span><br><span class="line">    u64 lba;                    <span class="comment">// 相对于文件系统的逻辑地址</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">ppa_addr</span> <span class="title">ppa</span>;</span>        <span class="comment">// 相对于设备的物理地址</span></span><br><span class="line">    <span class="keyword">int</span> flags;</span><br></pre></td></tr></table></figure></p>
+<p>buffer 以 2 的整数次方的大小进行循环管理，buffer 设定的最小值为二进制 110100100，即 420，且向上取 2 的 n 次方整，即 buffer 能取到的最小的大小为 512。实际取值为成功读取所需要的最小距离乘以 * luns 的数量，向上取 2 的 n 次方整。</p>
+<hr>
+<h2 id="Wear-Leveling"><a href="#Wear-Leveling" class="headerlink" title="Wear-Leveling"></a>Wear-Leveling</h2><p>版本 4.19 中没有见到有关于 wear-leveling 的代码。</p>
+<hr>
+<h2 id="Lightnvm-驱动相关层"><a href="#Lightnvm-驱动相关层" class="headerlink" title="Lightnvm 驱动相关层"></a>Lightnvm 驱动相关层</h2><p>相较于内核 4.12，当前的 4.19 在 Lightnvm 驱动相关层的源码没有太大变化，源码位于驱动源码文件所在的目录： /drivers/nvme/host/lightnvm.c。在驱动相关层源码中，需要实现下面的操作：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">nvm_dev_ops</span> <span class="title">nvme_nvm_dev_ops</span> = &#123;</span></span><br><span class="line">    .identity          = nvme_nvm_identity,</span><br><span class="line">    .get_l2p_tbl       = nvme_nvm_get_l2p_tbl,</span><br><span class="line">    .get_bb_tbl        = nvme_nvm_get_bb_tbl,</span><br><span class="line">    .set_bb_tbl        = nvme_nvm_set_bb_tbl,</span><br><span class="line">    .submit_io         = nvme_nvm_submit_io,</span><br><span class="line">    .create_dma_pool   = nvme_nvm_create_dma_pool,</span><br><span class="line">    .destroy_dma_pool  = nvme_nvm_destroy_dma_pool,</span><br><span class="line">    .dev_dma_alloc     = nvme_nvm_dev_dma_alloc,</span><br><span class="line">    .dev_dma_free      = nvme_nvm_dev_dma_free,</span><br><span class="line">    .max_phys_sect     = <span class="number">64</span>,</span><br></pre></td></tr></table></figure></p>
+<p>前四条操作分别对应 admin IO 的四条命令，即：</p>
+<ol>
+<li>获取设备的 geometry 信息；</li>
+<li>获取 L2P 表；</li>
+<li>获取坏块表；</li>
+<li>更新坏块表。</li>
+</ol>
+<p>第五条 submit_io 用于响应 Lightnvm 传来的常规 IO 请求。后面四条是分配和回收内存相关的操作。最后一条 max_phys_sect 是设备支持的最大物理扇区数。</p>
+<hr>
+<h2 id="IO-命令"><a href="#IO-命令" class="headerlink" title="IO 命令"></a>IO 命令</h2><h4 id="identity"><a href="#identity" class="headerlink" title="identity"></a>identity</h4><p>首先将 Lightnvm request 转换成 NVMe command，然后直接调用 nvme 模块提供的 nvme_submit_sync_cmd 函数（在这其中初始化了一个新的 request），然后执行了这个 request。</p>
+<h4 id="get-l2p-tbl"><a href="#get-l2p-tbl" class="headerlink" title="get_l2p_tbl"></a>get_l2p_tbl</h4><p>以 lun 为单位，同 identity 一样，首先要转换成 NVMe command，然后调用 nvme 提供的 nvme_submit_sync_cmd 函数去处理这个请求。如果请求包含了多个 luns，那么对每个 lun 都需要构造 NVMe command 并提交。</p>
+<h4 id="get-bb-tbl"><a href="#get-bb-tbl" class="headerlink" title="get_bb_tbl"></a>get_bb_tbl</h4><p>同identity。</p>
+<h4 id="set-bb-tbl"><a href="#set-bb-tbl" class="headerlink" title="set_bb_tbl"></a>set_bb_tbl</h4><p>同identity。</p>
+<h4 id="read-write"><a href="#read-write" class="headerlink" title="read/write"></a>read/write</h4><p>General IO（除了 Admin 以外的 IO）的处理方式与 Admin IO 的处理方式大同小异，首先要构造 NVMe command，然后根据 command 和 bio 初始化生成 request，最后调用块设备层的 blk_execute_rq_nowait() 函数执行请求。</p>
+<hr>
+<h2 id="Driver-激活-Lightnvm-驱动相关层"><a href="#Driver-激活-Lightnvm-驱动相关层" class="headerlink" title="Driver 激活 Lightnvm 驱动相关层"></a>Driver 激活 Lightnvm 驱动相关层</h2><ol>
+<li><p>注册 lightnvm，在 nvme 初始化时通过调用 nvme_nvm_register() 实现。（/drivers/nvme/host/core.c）</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (nvme_nvm_ns_supported(ns, id) &amp;&amp; nvme_nvm_register(ns, disk_name, node)) &#123;</span><br><span class="line">        dev_warn(ctrl-&gt;dev, <span class="string">"%s: LightNVM init failure\n"</span>, __func__);</span><br><span class="line">        <span class="keyword">goto</span> out_free_id;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>注销 lightnvm，在 nvme 驱动被卸载前通过调用 nvme_nvm_unregister() 实现。（/drivers/nvme/host/core.c）</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">nvme_free_ns()</span><br><span class="line"><span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">    nvme_nvm_unregister(ns);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>注册 lightnvm_sysfs，在 nvme 初始化时通过调用 nvme_nvm_register_sysfs()。（/drivers/nvme/host/core.c）</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (ns-&gt;ndev &amp;&amp; nvme_nvm_register_sysfs(ns))</span><br><span class="line">        pr_warn(<span class="string">"%s: failed to register\n"</span>, ns-&gt;disk-&gt;disk_name);</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>注销 lightnvm_sysfs，在 nvme 驱动被卸载前调用 nvme_nvm_unregister_sysfs()。（/drivers/nvme/host/core.c）</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">nvme_ns_remove()</span><br><span class="line">    <span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">        nvme_nvm_unregister_sysfs(ns);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/FIOS-scheduler/">
+      FIOS 调度器的实现思路整理
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <h2 id="时间片管理"><a href="#时间片管理" class="headerlink" title="时间片管理"></a>时间片管理</h2><h4 id="CFQ的时间片管理"><a href="#CFQ的时间片管理" class="headerlink" title="CFQ的时间片管理"></a>CFQ的时间片管理</h4><p>CFQ 的时间片管理如下图。每个请求队列 cfq queue 的时间片用完后，都要通过【选择 cfq group -&gt; 选择 service tree -&gt; 选择 cfq queue】的流程，从其自身维护的数据结构中找出下一个要被调度的请求队列，整个选择相当于根据一个优先级顺序不断地遍历这个数据结构。当一个 cfq queue 的时间片用尽，就要等到下一轮遍历回来才能被调度。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/641123401.jpg" alt="20181130202346.jpg"><br>!!!<br></center><br>!!!<br>针对 cfq group、service tree、cfq queue 以及 cfq queue 中的 request，调度都不是顺序执行的，优先级高的将被优先执行。由于存在优先级，必须要考虑进程和请求饥饿的情况，因此 cfq 中引入一个 fifo 的数据结构来组织请求，并给每个请求一个等时间长度的 expire time，这样 fifo 中位于头部的请求的 expire time 就最小，只有在当前时间超过 expire time 的情况下，调度将绕过优先级，直接从 fifo 中取请求进行调度。</p>
+<h4 id="FIOS的时间片管理"><a href="#FIOS的时间片管理" class="headerlink" title="FIOS的时间片管理"></a>FIOS的时间片管理</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1347841257.jpg" alt="20181130202347.jpg"><br>!!!<br></center><br>!!!<br>FIOS 论文中未提及该调度器是如何编码实现的，只说了他们设计了一个新的调度器。根据文章中提到的时间片管理方法，将其绘制成上面的图所示。一个 epoch 就是一组时间片的集合，相当于将 cfq 中的每个任务一组时间片，任务与任务之间顺序执行的方式进行打散，每轮整体循环中，某个任务的数个时间片可以在这轮循环中的任意时间点执行。而一旦某个任务的时间片都消耗完了，新的请求就只能等待到下一轮循环才能继续执行。文章中未提及到不同任务的请求队列之间是如何进行组织的，因此就默认采用链表的结构进行组织。</p>
+<h4 id="在-CFQ-上实现-FIOS"><a href="#在-CFQ-上实现-FIOS" class="headerlink" title="在 CFQ 上实现 FIOS"></a>在 CFQ 上实现 FIOS</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/125942763.jpg" alt="20181130202348.jpg"><br>!!!<br></center><br>!!!<br>第一个版本（下面简称 fios1）的实现思路是：在原有的 cfq 的基础上，将每个请求队列连续的时间片打散。cfq 有一套复杂的请求队列选择方法，并且请求队列的选择是基于优先级进行的，也即在一定时间内，优先级高的队列比优先级低的队列被执行的次数更多。</p>
+<p>fios1 没有考虑请求队列的选取方式，而是将请求队列的选择视为一个黑盒。考虑在时间序列上，存在一个请求队列的顺序序列，例如下图所示，fios1 在时间序列上实现 epoch 的时间片管理，但是优先级高的请求队列会被更多的调度，由此导致不公平。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3303362431.jpg" alt="20181130202349.jpg"><br>!!!<br></center><br>!!!</p>
+<p>fios1 的第二个问题是遍历请求队列的过程存在问题。由于 group、service tree 以及请求队列存在优先级，将导致不公平的调度。由于 fios1 的时间片整体切换要满足以下条件：</p>
+<ol>
+<li>当前时间片序列中所有任务都没有可用的时间片，或</li>
+<li>当前有可用时间片的任务的队列中没有 IO 请求。</li>
+</ol>
+<p>具体的实施方式是这样的：</p>
+<ol>
+<li>定义一个指针 P 指向当前的请求队列；</li>
+<li>从当前请求队列往后面遍历，判断请求队列是否有可用的时间片以及有可用时间片的请求队列中是否有 IO 请求；</li>
+<li>如果条件 2 满足，则对请求队列进行调度；</li>
+<li>如果条件 2 不满足，则一直取下一个请求队列，直到取出的请求队列与指针 P 指向的地址相同，即发生了一轮循环，表示没有可调度的请求队列，此时进行时间片的整体刷新。</li>
+</ol>
+<p>上面的时间片刷新方法存在一个问题，如下图所示，如果请求队列按照循环队列的方式进行组织，则可以保证循环一轮后，每一个队列都有且只有被访问一次；而徜若请求队列的组织形式不是线性的，则会存在有些请求队列被访问多次，而有些队列完全没被访问到，例如图中的 queue 4 未被访问就可能判定需要刷新所有任务的时间片了。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1842719657.jpg" alt="20181130202350.jpg"><br>!!!<br></center><br>!!!</p>
+<p>同样的由非线性组织的请求队列导致的第三个问题，即刷新所有任务的时间片时，有些请求队列没有被访问到，例如上图所示的 queue 4 就未被访问到。</p>
+<h4 id="FIOS2"><a href="#FIOS2" class="headerlink" title="FIOS2"></a>FIOS2</h4><p>在第二个实现的版本中，剔除了 group，并且只有一个 service tree 的结构，如下图所示。虽然避免了多个 service tree 的选择问题，但是 service tree 内部仍然是按照红黑树的方式进行组织的，所以仍然存在优先级影响请求队列访问的公平性。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3784339604.jpg" alt="20181130202351.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="读写干扰管理"><a href="#读写干扰管理" class="headerlink" title="读写干扰管理"></a>读写干扰管理</h2><h4 id="FIOS-论文中的读写干扰管理"><a href="#FIOS-论文中的读写干扰管理" class="headerlink" title="FIOS 论文中的读写干扰管理"></a>FIOS 论文中的读写干扰管理</h4><p>由于 flash 的读写性能差异，FIOS 采用读优先策略，保证当任务的请求队列中有读请求存在时，优先执行读请求，同时将阻塞写请求，直到完成完整的数据读取。只有在写入请求已经发出的情况下，后续到来的读请求才会被写请求阻塞。这种策略会导致额外的写请求排队时间，但是由于读请求更快，所以相对而言写请求的额外排队时间较小。读优先的策略仍然受制于基于 epoch 的时间片管理机制，所以能够防止其他任务的写请求陷入饥饿。但是无法保证某个任务自身的读请求不会阻塞自身的写请求。关于这点文章中未给出准确的处理方法。</p>
+<h4 id="关于在-CFQ-上实现读优先策略"><a href="#关于在-CFQ-上实现读优先策略" class="headerlink" title="关于在 CFQ 上实现读优先策略"></a>关于在 CFQ 上实现读优先策略</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4008843751.jpg" alt="20181130202352.jpg"><br>!!!<br></center><br>!!!</p>
+<p>上图是 cfq 现有的取请求操作。对请求队列的每一次调度，都要进行如下的步骤：</p>
+<ol>
+<li>last 表示该请求队列上一次调度的请求所在的红黑树位置</li>
+<li>prev 表示位于 last 前一个的请求</li>
+<li>next 表示位于 last 后一个的请求</li>
+<li>如果 prev 和 next 其中一个是同步请求，则调度同步请求；</li>
+<li>如果两个请求都是同步或者都是异步请求，则执行步骤 6；</li>
+<li>根据 last 请求对应的地址，计算 prev 和 next 到 last 之间的距离；</li>
+<li>判断 prev 和 next 是否 wrapped，从中取出一个请求进行调度。</li>
+</ol>
+<p>在实现 FIOS 的读优先策略时，考虑到遍历的效率问题，所以没有通过整个红黑树的遍历来寻找读请求，而是修改了上面的取请求操作。对于 last 前后的两个请求 prev 和 next，进行了简单的读请求判断。这种处理存在问题，如果 prev 和 next 都不是读请求，而读请求位于该请求队列的其他位置，则这一轮调度就没有“读优先”了。</p>
+<hr>
+<h2 id="I-O-并行性"><a href="#I-O-并行性" class="headerlink" title="I/O 并行性"></a>I/O 并行性</h2><p>FIOS 文章中给了两种方法进行并行 IO 的开销计算。第一种方法是：首先校准不同数据大小的读/写请求的开销时间，并根据校准结果的类型（读/写）和大小，计算出 IO 请求的时间开销。文章中只校准了四种情况：4KB 读、128KB 读、4KB 写、128KB 写。这种方法必须基于一个大前提：假设 IO 请求的时间开销和数据大小之间是线性关系。</p>
+<p>文中还给了第二个方法，用总的请求执行时间开销直接除以请求的数量。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/53035692.jpg" alt="20181130202353.jpg"><br>!!!<br></center><br>!!!<br>在实现 IO 并行性时，设置一个变量指示请求下发的数量，在一个请求队列的时间片用完或者队列中没有新的 IO 请求时，计算平均每个请求的时间开销，然后用新的时间开销来重新计算请求队列的剩余时间片。</p>
+<hr>
+<h2 id="适当的-I-O-Anticipation"><a href="#适当的-I-O-Anticipation" class="headerlink" title="适当的 I/O Anticipation"></a>适当的 I/O Anticipation</h2><p>FIOS 中设定的 Anticipation 时间长度的公式如下所示，其 α 为 0.5 作为默认值。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/374682975.jpg" alt="20181130202354.jpg"><br>!!!<br></center><br>!!!<br>在实现的时候，设定 4 个变量，分别如下：</p>
+<ul>
+<li>cfq_alpha = 50，表示 α 的值，默认为 50，取值区间为 0-99；</li>
+<li>cfq_tservice = NSEC_PER_SEC / 125，表示初始的 Tservice 值，默认取 8ms；</li>
+<li>cfq_tsrv_nr = 1，表示在 IO anticipation 期间调度的请求数量；</li>
+<li>cfq_tsrv_sum = NSEC_PER_SEC / 125，表示在 Anticipation 期间调度的时间开销；</li>
+</ul>
+<p>根据上面的 4 个值，每当在 Anticipation 期间执行了请求，就更新上面的四个变量。</p>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/CFQ-IO-scheduler-analysis/">
+      CFQ：完全公平排队 IO 调度器结构简析
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>block layer 的最核心功能可分为两部分——接受上层提交的请求；对请求进行调度。其中 block layer 的入口函数为：submit_bio。如下图所示：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2942533012.jpg" alt="20181130202339.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="文件系统请求提交-submit-bio"><a href="#文件系统请求提交-submit-bio" class="headerlink" title="文件系统请求提交 - submit_bio"></a>文件系统请求提交 - submit_bio</h2><p>接口函数 submit_bio 被调用后，将对 bio 进行合并，然后尝试合并 request，期间会调用调度器中定义的方法，完成合并后，请求将等待被调度。调度阶段，将决定哪个请求被下发执行，这里也会涉及到调度器的决策。bio的结构主要如下图：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1194828032.jpg" alt="20181130202340.jpg"><br>!!!<br></center><br>!!!</p>
+<p>每个 bio 中包括一个 bio_io_vec 数组，其中保存的每个单元是 bio_vec 结构体数据，而每个 bio_vec 分别对应到一个 page 的数据区域。bio 用变量 bi_idx 来进行索引，用 bio_vcnt 计数 bio_vec 的数量。请求的合并执行过程中，主要进行下面的六个步骤，分别对应调度器的六个函数调用：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2398287851.jpg" alt="20181130202341.jpg"><br>!!!<br></center><br>!!!</p>
+<p>假设执行合并的操作都失败了，即：没有能够合并的 bio。那么这个下发下来的 bio 就必须要填入一个新创建的 request 中，因此就涉及到 request 的创建了。在这里要对过大的 bio 进行切分，切分的操作如下所示。如果当前的 bio 大于一个阈值，则从中间某个位置切开，变成两个 bio。第一个 bio 的大小是能够接受的最大值，后一个 bio 将被继续调用 make request 函数进行迭代式的生成请求。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/765381464.jpg" alt="20181130202342.jpg"><br>!!!<br></center><br>!!!</p>
+<p>当一个 request 创建初始化，就要将其插入到相应的队列中，cfq_insert_request() 函数完成这个功能，和 deadline 调度器相似，request 会被放入两个队列里，一个是按照起始扇区号排列的红黑树 (sort_list)，一个是按响应期限排列的链表 (fifo)。</p>
+<p>提交阶段的关键函数调用关系如下图所示：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1754484221.jpg" alt="20181130202344.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="调度器请求派发-dispatch"><a href="#调度器请求派发-dispatch" class="headerlink" title="调度器请求派发 - dispatch"></a>调度器请求派发 - dispatch</h2><p>dispatch 部分主要是对请求进行调度，调度步骤如下图所示。调度分成两部分，强制调度和非强制调度。如果是强制调度，则将整个 queue 中的请求全部推到调度队列中；如果调度的方式是非强制的调度，则需要通过调度器进行操作，即选择要对哪一个队列中的哪一个请求进行调度。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3407355355.jpg" alt="20181130202343.jpg"><br>!!!<br></center><br>!!!</p>
+<p>派发阶段的关键函数调用关系如下图所示：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4182020329.jpg" alt="20181130202345.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="一图流解释-CFQ-源码结构"><a href="#一图流解释-CFQ-源码结构" class="headerlink" title="一图流解释 CFQ 源码结构"></a>一图流解释 CFQ 源码结构</h2><p>如下图所示。<a href="http://blog.xxiong.me/usr/uploads/2018/12/3124393989.zip" target="_blank" rel="noopener">点这里下载原图 CFQ.bmp.zip</a>。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4289002321.png" alt="20181130202338.png"><br>!!!<br></center><br>!!!</p>
+<p>大致上可以将 CFQ 分为两个部分——请求的【入】与【出】。除了上图左下角绿色部分的注册注销相关的入口函数，左半边是 IO 请求从 submit_bio 下来之后的调用路径；右边部分是在派发阶段，IO 调度器选择派发哪一个请求的接口。制图不容易，可能存在纰漏，不过导师和师兄也检查过了，应该没有遗漏的。</p>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/FIOS-Linux-IO-scheduler-paper/">
+      FIOS：Linux IO 公平调度器论文解读
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>FIOS，即 Flash IO Scheduler，出自 FAST’2012的一篇论文 <a href="https://www.usenix.org/legacy/event/fast12/tech/full_papers/Park.pdf" target="_blank" rel="noopener">FIOS: a fair, efficient flash I/O scheduler</a>，致力于解决在 NAND Flash 上存在的公平性问题。我们知道 Linux 已有一个着重公平性的 IO 调度器：CFQ，并且已经发展的非常成熟，那为何又出来一个 FIOS 呢，且听我一一道来。</p>
+<hr>
+<h2 id="SSD-面临的调度问题"><a href="#SSD-面临的调度问题" class="headerlink" title="SSD 面临的调度问题"></a>SSD 面临的调度问题</h2><p>要突出一个东西的好，就要有对比。SSD 面临的调度问题就是 CFQ 在 NAND Flash 上的缺点，到目前应用于 SSD 的调度器通常是 NOOP 或 DeadLine，如果使用 CFQ，反而会造成性能更差。问题如下：</p>
+<ol>
+<li>读写性能差异带来 IO 瓶颈</li>
+<li>读可能被写阻塞，导致读写不公平</li>
+<li>严格的读优先可能导致同步写的不公平</li>
+<li>目前的公平调度器针对 flash 读/写性能的差异不能很好的处理</li>
+<li>过渡的 IO 预期将会导致很长的空闲时间，会显著降低 flash 性能</li>
+<li>CFQ 没有将 SSD 的并发特性使用起来</li>
+</ol>
+<p>要分析以上问题，我们就要基于下面的已知条件：SSD 的读写不平衡。不同于机械硬盘，大量的时间开销在于寻道，SSD 不存在寻道操作，因此写入的速度远远慢于读取的速度。CFQ 不会严格筛选出读请求，那么必然存在写请求阻塞读请求的情况，导致同步的读请求迟迟得不到处理。此外 CFQ 还存在一个 IO 预期的操作，相对于机械硬盘而言，这个预期的时间是比较合理的，通常是 8 ms，而对于 SSD 而言，由于单个请求的处理速度比机械硬盘快得多，那么相对过长的预期将是一种浪费。FIOS 针对 SSD 的特性提出了一种新的设计思路，总结为下面 4 个设计点：</p>
+<ul>
+<li>公平时间片管理</li>
+<li>读写干扰管理</li>
+<li>并行发送请求</li>
+<li>更加有限的 IO 预期</li>
+</ul>
+<hr>
+<h2 id="公平时间片管理"><a href="#公平时间片管理" class="headerlink" title="公平时间片管理"></a>公平时间片管理</h2><p>与 CFQ 一样，FIOS 也采用时间片的调度，不同之处在于，FIOS 将时间片打散，引入一个新的概念：epoch。epoch 是一组时间片的集合，IO调度器在每个epoch上实现公平性，我们后面会详细介绍调度过程。一个任务的时间片可以在一个 epoch 内的几个非连续时间段使用，一旦一个任务消耗完了当前 epoch 内属于它的时间片，就必须等待下一个 epoch 刷新其时间片。下图是一个 epoch 的示意图。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3733445443.jpg" alt="20181130202328.jpg"><br>!!!<br></center><br>!!!</p>
+<p>在 CFQ 中，一轮调度中所有任务的时间片按照以时间片为单位依次排列，时间片消耗光后再刷新所有时间片开启一轮新的调度；而在 FIOS 中，一轮 epoch 调度中，只要任务还有时间片，就有可能在 epoch 的任意位置被调度，这样能够很好的减少空转的等待时间。</p>
+<p>一轮 epoch 结束并且开始新的 epoch 的条件为：</p>
+<ul>
+<li>当前 epoch 中所有任务都没有可用时间片；或</li>
+<li>当前 epoch 中还有可用时间片的任务没有新的 IO 请求</li>
+</ul>
+<hr>
+<h2 id="读写干扰管理"><a href="#读写干扰管理" class="headerlink" title="读写干扰管理"></a>读写干扰管理</h2><p>为了减少写请求对读请求造成的阻塞，FIOS 简单的采取了读取优先策略。</p>
+<ul>
+<li>当读/写请求在 IO 调度队列中排队时，读取优先策略将优先发出读请求，并阻止所有写请求，直到完成完整的读取</li>
+<li>只有写入已经发出后，读请求到达时，才会被写请求阻塞</li>
+<li>优先读取策略会导致额外的写请求排队时间，但是由于读请求更快，所以相对而言写请求的额外排队时间较小</li>
+<li>读取优先策略仍受制于基于 epoch 的时间片管理的控制，因此可以防止写入的饥饿</li>
+</ul>
+<p>下图举例：假设每个进程的时间片为 3，P1-R 表示进程 1 的读请求，P2-W 表示进程 2 的写请求。当读/写请求在 IO 调度队列中排队时，读取优先策略将优先发出读请求，并阻止所有写请求，直到完成完整的读取。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/291393210.jpg" alt="20181130202329.jpg"><br>!!!<br></center><br>!!!<br>只有写入已经发出后，读请求到达时，才会被写请求阻塞。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1280968980.jpg" alt="20181130202330.jpg"><br>!!!<br></center><br>!!!<br>读取优先策略仍受制于基于epoch的时间片管理的控制，因此可以防止写入的饥饿。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/80876022.jpg" alt="20181130202331.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="并行发送请求——IO-开销计算"><a href="#并行发送请求——IO-开销计算" class="headerlink" title="并行发送请求——IO 开销计算"></a>并行发送请求——IO 开销计算</h2><p>由于 SSD 设备内部存在并行，如果连续下发了数个请求，请求实际被并行执行，而在调度器中被计算成了串行的时间开销，会造成一定程度的不准确——即：任务的请求没有用那么多时间，却被计算成了那么多时间，导致这一轮调度能够被执行的请求数减少，导致了调度的不公平。FIOS 使用两种方法来核准 IO 开销。</p>
+<h4 id="线性核准"><a href="#线性核准" class="headerlink" title="线性核准"></a>线性核准</h4><ul>
+<li>大前提：假设 IO 请求的时间开销和数据大小之间是线性关系</li>
+<li>首先校准不同数据大小的读/写请求的开销时间，并根据校准结果的类型（读/写）和大小，计算出 IO 请求的时间开销</li>
+<li>其中只校准了四种情况：4KB 读、128KB 读、4KB 写、128KB 写</li>
+</ul>
+<p>方法一不可用时，将采用备用方法进行 IO 成本核算。</p>
+<h4 id="平均法核准"><a href="#平均法核准" class="headerlink" title="平均法核准"></a>平均法核准</h4><p>大前提：假设在设备上一组未完成的 IO 请求保持不变（不发出新的请求或完成未完成的请求）期间，所有未完成的 IO 请求均等地共享此时段的设备使用开销。IO 开销计算公式：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3286290209.jpg" alt="20181130202332.jpg"><br>!!!<br></center><br>!!!</p>
+<p>举例来说，例如下面在某个时间段 T 内，下发了 P 个请求，并且等待到它们执行完成并回调，则每个请求的时间开销都是 cost = T / P。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4079321370.jpg" alt="20181130202333.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="更加有限的-IO-预期"><a href="#更加有限的-IO-预期" class="headerlink" title="更加有限的 IO 预期"></a>更加有限的 IO 预期</h2><p>IO 预期最开始在磁盘上的使用目的是为了提高性能；在 SSD 中主要的作用是保证公平性。我们考虑两个问题：</p>
+<ul>
+<li>何时进行预期？</li>
+<li>预期多长时间？</li>
+</ul>
+<h4 id="何时进行预期"><a href="#何时进行预期" class="headerlink" title="何时进行预期"></a>何时进行预期</h4><p>当一个请求刚刚完成时，始终考虑预期。将拥有刚刚完成的请求的任务称为预期任务。</p>
+<ol>
+<li>当预期任务快速处理刚刚完成的 I/O 请求并发出另一请求时，欺骗性空闲可能会打破公平的时间片管理。这种情况下采用如下的处理方法：<ul>
+<li>如果预期任务没有非零剩余时间片，则 epoch 正常结束</li>
+<li>如果预期任务具有非零剩余时间片，则在 epoch 切换之前进行预测</li>
+</ul>
+</li>
+<li>欺骗性空闲可能会破坏优先读策略，当发出读取请求的任务很少时，可能存在请求队列中没有读请求的情况。为了保证优先读取策略，在完成读取请求后，需要一个 IO 预期。因为立即发出写入请求可能会阻止后面的读取。</li>
+</ol>
+<h4 id="预期多长时间"><a href="#预期多长时间" class="headerlink" title="预期多长时间"></a>预期多长时间</h4><p>机械硬盘中的 IO 预期大致设置为磁盘 IO 操作的时间，即 6-8ms。但是 SSD 中大不相同，SSD 上的 IO 预期不会改善性能，使用 IO 预期的目的是维持公平性，因为 flash IO 服务时间远小于磁盘 IO 操作时间，这会加剧 flash 上 IO 预期引起的设备空闲成本。</p>
+<p>FIOS 根据可容忍性能损失的可配置阈值设置 I/O 预期的界限，以保持公平性。用阈值 α 表示用于预计公平性的最大时间比例，确保最大设备空闲时间不超过设备总时间的 α 比例。IO 预期的时间为：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2092397694.jpg" alt="20181130202334.jpg"><br>!!!<br></center><br>!!!</p>
+<p>其中 Tserve 是通过计算该任务过去的指数加权移动平均值得到的，每个任务都有一个 Tservice；FIOS 设置的 α 默认值为 0.5。最后要说明这里的 IO 预期的时间成本需要计算到预期任务的时间片中。</p>
+<p>更多细节请阅读 <a href="https://www.usenix.org/legacy/event/fast12/tech/full_papers/Park.pdf" target="_blank" rel="noopener">FIOS 论文原文</a>。</p>
+<p>（完）</p>
+<hr>
+<h2 id="参考文献"><a href="#参考文献" class="headerlink" title="参考文献"></a>参考文献</h2><p><a href="https://www.usenix.org/legacy/event/fast12/tech/full_papers/Park.pdf" target="_blank" rel="noopener">1</a> Park S, Shen K. FIOS: a fair, efficient flash I/O scheduler[C]//FAST. 2012: 13.</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/Femu-source-environment-build/">
+      Femu 源码简析与测试环境配置
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>Femu 来自于 fast-18 上发布的一篇论文<a href="https://www.usenix.org/conference/fast18/presentation/li" target="_blank" rel="noopener">The CASE of FEMU: Cheap, Accurate, Scalable and Extensible Flash Emulator</a><a href="https://www.usenix.org/conference/fast18/presentation/li" target="_blank" rel="noopener">1</a>。首先 Femu 基于 Qemu 虚拟机实现的，在 Qemu 虚拟机中，对模拟 nvme 的模块进行了部分扩展，以支持更加高级别的针对 Lightnvm 的仿真功能。与原生的 Qemu-nvme 相比，Femu 的扩展主要集中在延迟仿真上。</p>
+<hr>
+<h2 id="Qemu-nvme-简介"><a href="#Qemu-nvme-简介" class="headerlink" title="Qemu-nvme 简介"></a>Qemu-nvme 简介</h2><p>Qemu 与宿主机/客户机系统的示意图如下，Qemu 是运行在宿主机之上的一个应用程序，在这个应用程序中，虚拟出一个硬件平台，例如 x86 架构或 arm 架构。在这之上再运行客户机系统，也就是跑在虚拟机上的操作系统。Qemu 模拟硬件平台包含很多东西，其中就有我们关注的块设备模拟，即 NVMe 设备。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3841775662.jpg" alt="20181130202324.jpg"><br>!!!<br></center><br>!!!</p>
+<p>Nvme 模块需要实现下面的函数——read 和 write：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> MemoryRegionOps nvme_mmio_ops = &#123;</span><br><span class="line">    .read = nvme_mmio_read,</span><br><span class="line">    .write = nvme_mmio_write,</span><br><span class="line">    .endianness = DEVICE_LITTLE_ENDIAN,</span><br><span class="line">    .impl = &#123;</span><br><span class="line">        .min_access_size = <span class="number">2</span>,</span><br><span class="line">        .max_access_size = <span class="number">8</span>,</span><br></pre></td></tr></table></figure></p>
+<p>这两个函数是对于 Qemu 而言的块设备模块的入口（在这里是扩展了 femu-oc 的 nvme 模块）。其中 read 负责读取寄存器的值，write 则负责进行具体的请求处理细节并进行写寄存器的值。写寄存器函数 nvme_mmio_write() 的功能大致如下图所示，包含两个类型的命令操作——Admin IO 和普通 IO。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/417258747.jpg" alt="20181130202325.jpg"><br>!!!<br></center><br>!!!<br>Admin IO 的操作与 Lightnvm 驱动相关层的操作一一对应，分别是获取设备 Geometry 信息、获取映射表、获取坏块表以及更新坏块表。通用 IO 操作也与 Lightnvm 驱动相关层一一对应，包括了读、写、擦三个操作。下面介绍这两种类型的延迟仿真方式。</p>
+<hr>
+<h2 id="Admin-IO-的延迟仿真"><a href="#Admin-IO-的延迟仿真" class="headerlink" title="Admin IO 的延迟仿真"></a>Admin IO 的延迟仿真</h2><p>Femu 基于 Qemu-nvme 所做的修改主要就是一个部分——延迟仿真。Admin IO 的延迟仿真示意图如下图所示，首先从 Submission Queue 中取出一条请求，然后执行这条请求，执行完毕后，将请求插入到一个处理完成的队列中，然后更新 CQ（Completion Queue）定时器时间（当前时间+500纳秒），之后更新 SQ（Submission Queue）定时器（当前时间+10000纳秒）。CQ 定时器触发后，将执行结果插入到 Completion Queue 后，按下 CQ Doorbell。另一边 SQ 定时器触发后，将进行下一个请求的处理任务。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2558966397.jpg" alt="20181130202326.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="General-IO-的延迟仿真"><a href="#General-IO-的延迟仿真" class="headerlink" title="General IO 的延迟仿真"></a>General IO 的延迟仿真</h2><p>General IO 的延迟仿真示意图如下所示，与 Admin IO 相似，首先从 Submission Queue 中取出一条请求，然后执行这条请求，执行完毕后，与 Admin IO 不同的一点在于：General IO 的执行流程包含了读、写某个芯片、数据传输等操作的延迟，因此必须要计算执行操作所需要的时间。计算出操作所需时间后，将请求插入到一个处理完成的队列中，然后更新 CQ（Completion Queue）定时器时间（当前时间 +500 纳秒），之后更新 SQ（Submission Queue）定时器（当前时间 + 当前 IO 操作所需要的时间）。CQ 定时器触发后，将执行结果插入到 Completion Queue 后，按下 CQ Doorbell。另一边 SQ 定时器触发后，将进行下一个请求的处理任务。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1939032795.jpg" alt="20181130202327.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="本文所用的环境"><a href="#本文所用的环境" class="headerlink" title="本文所用的环境"></a>本文所用的环境</h2><p>Femu 的作者已将启动命令以脚本的形式保存，下面介绍 Femu 安装所需要的环境以及运行的步骤。</p>
+<ol>
+<li>Python 2.7</li>
+<li>Ubuntu 18.04</li>
+<li>Linux 4.14</li>
+</ol>
+<p>此外需要额外安装的包与软件已经集合到 femu/femu-scripts/pkgdep.sh 脚本，直接执行即可。</p>
+<hr>
+<h2 id="Femu-安装过程记录"><a href="#Femu-安装过程记录" class="headerlink" title="Femu 安装过程记录"></a>Femu 安装过程记录</h2><ol>
+<li><p>git 拷贝一份 Femu 的源码</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">git <span class="built_in">clone</span> git@github.com:ucare-uchicago/femu.git</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>进入 femu/build-femu，如果没有这个文件夹，可以自行在同级目录下面创建</p>
+</li>
+<li><p>将 femu/femu-scripts 文件夹下面的所有文件复制到 build-femu 文件夹下。实际上不需要全部复制，在 femu/femu-scripts/femu-copy-scripts.sh 文件中制定了需要复制的文件，所以实际上只需要复制 femu-copy-scripts.sh 这个脚本到 build-femu 文件夹下，然后执行即可。另一种快捷的方式是直接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cp ../femu-scripts/*.sh ../build-femu</span><br><span class="line">cp ../femu-scripts/ftk ../build-femu</span><br><span class="line">cp ../femu-scripts/vssd1.conf ../build-femu</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>运行 femu-compile.sh</p>
+</li>
+<li><p>建议创建一个格式为 qcow2 的镜像文件（其他格式的镜像也可以，qcow2 是动态扩展空间。其他格式在启动 qemu 的时候改一下对应命令的格式就可），这个文件相当于我们的磁盘设备，创建好之后给这个镜像（磁盘）安装系统。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">qemu-img create –f qcow2 u14s.qcow2 20G</span><br><span class="line">qemu-system-x86_64 –m 2G –<span class="built_in">enable</span>-kvm u14s.qcow2 –cdrom ubuntu18.04-beta2-desktop-amd64.iso</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通过配置当前目录下面的 conf 文件可以配置 SSD 的不同参数，仿真延时可以配置不同的 channel 和更多的具体的参数；例如：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">PAGE_SIZE               4096</span><br><span class="line">PAGE_NB                 256</span><br><span class="line">SECTOR_SIZE             512</span><br><span class="line">FLASH_NB                64</span><br><span class="line">BLOCK_NB                16</span><br><span class="line">PLANES_PER_FLASH        1</span><br><span class="line">LOG_RAND_BLOCK_NB       0</span><br><span class="line">LOG_SEQ_BLOCK_NB        0</span><br><span class="line">REG_WRITE_DELAY         40000</span><br><span class="line">CELL_PROGRAM_DELAY      800000</span><br><span class="line">REG_READ_DELAY          60000</span><br><span class="line">CELL_READ_DELAY         40000</span><br><span class="line">BLOCK_ERASE_DELAY       3000000</span><br><span class="line">CHANNEL_SWITCH_DELAY_R  16</span><br><span class="line">CHANNEL_SWITCH_DELAY_W  33</span><br><span class="line">IO_PARALLELISM          0</span><br><span class="line">WRITE_BUFFER_FRAME_NB   2048</span><br><span class="line">READ_BUFFER_FRAME_NB    2048</span><br><span class="line">CACHE_IDX_SIZE          10</span><br><span class="line">CHANNEL_NB              8</span><br><span class="line">OVP                     0</span><br><span class="line">GC_MODE                 2</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>通过 qemu 启动的我们的系统时，可以通过 qemu 给系统加载对应的设备和驱动，并且配置不同的参数（每次启动系统都通过 ./qemu-img 来读取配置文件创建对应的设备镜像 raw），例如可以从脚本 femu/femu-scripts/run-whitebox.sh 中来看到，所以运行的时候只需要运行这个集合命令集的 shell 脚本</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">./qemu-img create -f raw <span class="variable">$NVMEIMGF</span> <span class="variable">$NVMEIMGSZ</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>进入系统需要挂载设备，首先找到设备名字和位置，通过 lsblk 可以看到还未格式化和挂载的创建 nvme 设备</p>
+</li>
+<li><p>我们可以把这个磁盘挂载到 /tmp/ 下。首先创建一个文件夹 mkdir ene_test，然后格式化设备为 ext4 格式，mkfs.ext4 /dev/nvme0n1，接下来将格式化的设备挂载到我们对应的文件夹 ene_nvme 下：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">mount /dev/nvme0n1 ene_nvme/</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>到此可以通过 df –h 看到我们自己的设备，它在 dev/nvme0n1 下，被挂载到 /tmp/ene_test/。我们可以进入挂载的文件夹下面对这个设备进行各种磁盘操作了。</p>
+</li>
+</ol>
+<p>（完）</p>
+<hr>
+<h2 id="参考文献"><a href="#参考文献" class="headerlink" title="参考文献"></a>参考文献</h2><p><a href="https://www.usenix.org/conference/fast18/presentation/li" target="_blank" rel="noopener">1</a> Li H, Hao M, Tong M H, et al. The case of FEMU: cheap, accurate, scalable and extensible flash emulator[C]//Proc. of 16th USENIX Conference on File and Storage Technologies (FAST). 2018: 83-90.</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/Linux-test-linux-module-build/">
+      Linux 实验内容设计：向内核中插入虚拟块设备
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>大三【Linux 操作系统】课的实验内容设计二：向内核中插入虚拟块设备。</p>
+<p>事情是这样的，课题教学组有位老师抱怨实验无趣，4 个实验课内容从古沿用至今，每学期的助教都是直接拿往届的实验内容去上，都尽量能少一事就少一事，然后再加上已经上了的实验一，是一如既往的“编译内核与添加系统调用”，被班里的大神们抱怨没啥意思。作为萌新的我只能龟缩在角落玩扫雷，并不断的观察着黑下脸的任课老师。大概这位老师觉得被学生看扁了很不爽吧，次日五个教学班的助教都被召集，要求在一周内设计出有意思的实验内容，并要求附上实验操作手册。<del>于是就有了这篇麻烦。</del>权当做个记录。</p>
+<hr>
+<h2 id="实验目的"><a href="#实验目的" class="headerlink" title="实验目的"></a>实验目的</h2><ul>
+<li>了解 Linux 模块化编程的方式和原理。</li>
+<li>了解并掌握如何向 Linux 内核中注册一个功能模块。</li>
+<li>了解 sysfs 文件系统的原理和作用。</li>
+<li>学习并掌握如何通过内核提供的 API 向 sysfs 中注册自定义节点。</li>
+<li>了解 Makefile 的编写规则。</li>
+<li>了解并掌握模块化编译的原理和步骤。</li>
+<li>学习 insmod 和 rmmod 插入/卸载模块的原理的操作过程。</li>
+<li>了解 Linux 设备驱动模型。</li>
+<li>理解设备驱动模型中总线、设备、驱动三者的关系。</li>
+<li>了解设备的注册机制和原理。</li>
+<li>掌握块设备的注册原理和操作过程。</li>
+<li>学习并掌握如何通过内核提供的API向内核中注册块设备。</li>
+<li>掌握dmesg的使用。</li>
+</ul>
+<hr>
+<h2 id="Linux-内核模块机制"><a href="#Linux-内核模块机制" class="headerlink" title="Linux 内核模块机制"></a>Linux 内核模块机制</h2><h4 id="模块结构体——module"><a href="#模块结构体——module" class="headerlink" title="模块结构体——module"></a>模块结构体——module</h4><p>module 结构体的主要成员如下代码段所示，module_state 指示模块的状态；模块通过 list_head 将自身插入到内核模块链表中；name 是模块的名称，内核通过这个 name 来识别模块；version 和 srcversion 是模块版本号；之后是模块的入口函数和注销函数——init 和 exit。在实际使用 Linux 内核模块编程时，都必须要实现 init 和 exit 函数。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">module</span> &#123;</span></span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">enum</span> module_state state;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span> <span class="title">list</span>;</span>	</span><br><span class="line">    <span class="keyword">char</span> name[MODULE_NAME_LEN];</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span> *version;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span> *srcversion;</span><br><span class="line">    <span class="keyword">int</span> (*init)(<span class="keyword">void</span>);</span><br><span class="line">    <span class="keyword">void</span> (*<span class="built_in">exit</span>)(<span class="keyword">void</span>);</span><br><span class="line">    ......</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">enum</span> module_state &#123;</span><br><span class="line">    MODULE_STATE_LIVE,      <span class="comment">/* Normal state. */</span></span><br><span class="line">    MODULE_STATE_CONMING,   <span class="comment">/* Full formed, running module_init. */</span></span><br><span class="line">    MODULE_STATE_GOING,     <span class="comment">/* Going away. */</span></span><br><span class="line">    MODULE_STATE_UNFORMED,  <span class="comment">/* Still setting it up. */</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<h4 id="查看模块信息"><a href="#查看模块信息" class="headerlink" title="查看模块信息"></a>查看模块信息</h4><p>使用 readelf 命令可以查看模块文件的信息。例如下代码段所示：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)readelf -h darkelf.ko</span><br><span class="line">ELF Header:</span><br><span class="line">  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00</span><br><span class="line">  Class:                             	ELF64</span><br><span class="line">  Data:                              	2<span class="string">'s complement, little endian</span></span><br><span class="line"><span class="string">  Version:                           	1 (current)</span></span><br><span class="line"><span class="string">  OS/ABI:                            	UNIX - System V</span></span><br><span class="line"><span class="string">  ABI Version:                       	0</span></span><br><span class="line"><span class="string">  Type:                              	REL (Relocatable file)</span></span><br><span class="line"><span class="string">  Machine:                           	Advanced Micro Devices X86-64</span></span><br><span class="line"><span class="string">  Version:                           	0x1</span></span><br><span class="line"><span class="string">  Entry point address:               	0x0</span></span><br><span class="line"><span class="string">  Start of program headers:          	0 (bytes into file)</span></span><br><span class="line"><span class="string">  Start of section headers:          	332976 (bytes into file)</span></span><br><span class="line"><span class="string">  Flags:                             	0x0</span></span><br><span class="line"><span class="string">  Size of this header:               	64 (bytes)</span></span><br><span class="line"><span class="string">  Size of program headers:           	0 (bytes)</span></span><br><span class="line"><span class="string">  Number of program headers:        	0</span></span><br><span class="line"><span class="string">  Size of section headers:			64 (bytes)</span></span><br><span class="line"><span class="string">  Number of section headers:   		39</span></span><br><span class="line"><span class="string">  Section header string table index:	38</span></span><br></pre></td></tr></table></figure></p>
+<h4 id="模块加载"><a href="#模块加载" class="headerlink" title="模块加载"></a>模块加载</h4><p>模块加载是通过系统调用 init_module 来实现的，该系统调用源码位置位于源码文件 linux/kernel/module.c 中。这个系统调用是通过 SYSCALL_DEFINE3 (init_module…) 实现，其中有两个关键的函数调用。load_module 用于模块加载，do_init_module 用于回调模块的 init 函数。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_DEFINE3(init_module, <span class="keyword">void</span> __user *, umod,</span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">long</span>, len, <span class="keyword">const</span> <span class="keyword">char</span> __user *, uargs)</span><br><span class="line">&#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> load_module(&amp;info, uargs, <span class="number">0</span>);</span><br><span class="line">&#125;</span><br><span class="line">	</span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">load_module</span><span class="params">(struct load_info *info, </span></span></span><br><span class="line"><span class="function"><span class="params">        <span class="keyword">const</span> <span class="keyword">char</span> __user *uargs, <span class="keyword">int</span> flag)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ......</span><br><span class="line">    err = module_sig_check(info, flags);</span><br><span class="line">    err = elf_header_check(info);</span><br><span class="line">    mod = layout_and_allocate(info, flags);</span><br><span class="line">    ......</span><br><span class="line">    err = find_module_sections(mod, info);</span><br><span class="line">    err = check_module_license_and_version(mod);</span><br><span class="line">    setup_modinfo(mod, info);</span><br><span class="line">    ......</span><br><span class="line">    err = complete_formation(mod, info);</span><br><span class="line">    ......</span><br><span class="line">    err = mod_sysfs_setup(mod, info, mod-&gt;kp, mod-&gt;num_kp);</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> do_init_module(mod);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>do_init_module 的核心操作就是回调 init：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> noinline <span class="keyword">int</span> <span class="title">do_init_module</span><span class="params">(struct <span class="keyword">module</span> *mod)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">if</span> (mod-&gt;init != <span class="literal">NULL</span>)</span><br><span class="line">        ret = do_one_initcall(mod-&gt;init);</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">int</span> __<span class="function">init_or_module <span class="title">do_one_initcall</span><span class="params">(<span class="keyword">initcall_t</span> fn)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">if</span> (initcall_debug)</span><br><span class="line">        ret = do_one_initcall_debug(fn);</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        ret = fn();</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="模块卸载"><a href="#模块卸载" class="headerlink" title="模块卸载"></a>模块卸载</h4><p>模块卸载的操作由 delete_module 来完成，位于 linux3.5.2/kernel/module.c 中。通过回调 exit 完成模块的出口函数功能，最后调用 free_module 将模块卸载。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_DEFINE2(delete_module, <span class="keyword">const</span> <span class="keyword">char</span> __user *,</span><br><span class="line">        name_user, <span class="keyword">unsigned</span> <span class="keyword">int</span>, flags)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">module</span> *<span class="title">mod</span>;</span></span><br><span class="line">    <span class="keyword">char</span> name[MODULE_NAME_LEN];</span><br><span class="line">    <span class="keyword">int</span> ret, forced = <span class="number">0</span>;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">if</span> (mod-&gt;<span class="built_in">exit</span> != <span class="literal">NULL</span>)</span><br><span class="line">        mod-&gt;<span class="built_in">exit</span>();</span><br><span class="line">    ......</span><br><span class="line">    free_module(mod);</span><br><span class="line">    ......</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>内核模块其实并不神秘。传统的用户程序需要编译为可执行程序才能执行，而模块程序只需要编译为目标文件的形式便可以加载到内核，有内核实现模块的链接，将之转化为可执行代码。同时，在内核加载和卸载的过程中，会通过函数回调用户定义的模块入口函数和模块出口函数，实现相应的功能。</p>
+<hr>
+<h2 id="Linux-内核块设备介绍"><a href="#Linux-内核块设备介绍" class="headerlink" title="Linux 内核块设备介绍"></a>Linux 内核块设备介绍</h2><h4 id="块设备概念"><a href="#块设备概念" class="headerlink" title="块设备概念"></a>块设备概念</h4><p>一种具有一定结构的随机存取设备，对这种设备的读写是按块进行的，他使用缓冲区来存放暂时的数据，待条件成熟后，从缓存一次性写入设备或者从设备一次性读到缓冲区。可以随机访问，块设备的访问位置必须能够在介质的不同区间前后移动。</p>
+<h4 id="块设备相关属性"><a href="#块设备相关属性" class="headerlink" title="块设备相关属性"></a>块设备相关属性</h4><ul>
+<li>扇区(Sectors)：任何块设备硬件对数据处理的基本单位。通常，1 个扇区的大小为 512byte。（对设备而言）</li>
+<li>块  (Blocks)：由 Linux 制定对内核或文件系统等数据处理的基本单位。通常，1 个块由 1 个或多个扇区组成。（对 Linux 操作系统而言）</li>
+<li>段(Segments)：由若干个相邻的块组成。是 Linux 内存管理机制中一个内存页或者内存页的一部分。<br>!!!<br><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2374434949.jpg" alt="20181130202335.jpg"><br>!!!<br></center><br>!!!</li>
+</ul>
+<h4 id="块设备被访问的分层实现"><a href="#块设备被访问的分层实现" class="headerlink" title="块设备被访问的分层实现"></a>块设备被访问的分层实现</h4><p>首先块设备驱动是以何种方式对块设备进行访问的。在 Linux 中，驱动对块设备的输入或输出 (I/O) 操作，都会向块设备发出一个请求，在驱动中用 request 结构体描述。但对于一些磁盘设备而言请求的速度很慢，这时候内核就提供一种队列的机制把这些 I/O 请求添加到队列中(即：请求队列)，在驱动中用 request_queue 结构体描述。在向块设备提交这些请求前内核会先执行请求的合并和排序预操作，以提高访问的效率，然后再由内核中的 I/O 调度程序子系统(即：上图中的 I/O 调度层)来负责提交 I/O 请求，I/O 调度程序将磁盘资源分配给系统中所有挂起的块 I/O 请求，其工作是管理块设备的请求队列，决定队列中的请求的排列顺序以及什么时候派发请求到设备，关于更多详细的 I/O 调度知识这里就不深加研究了。</p>
+<p>然后块设备驱动又是怎样维持一个 I/O 请求在上层文件系统与底层物理磁盘之间的关系呢？这就是上图中通用块层 (Generic Block Layer) 要做的事情了。在通用块层中，通常用一个 bio 结构体来对应一个 I/O 请求，它代表了正在活动的以段 (Segment) 链表形式组织的块 IO 操作，对于它所需要的所有段又用 bio_vec 结构体表示。</p>
+<p>块设备驱动又是怎样对底层物理磁盘进行反问的呢？上面讲的都是对上层的访问对上层的关系。Linux 提供了一个 gendisk 数据结构体，用他来表示一个独立的磁盘设备或分区。在 gendisk 中有一个类似字符设备中 file_operations 的硬件操作结构指针，他就是 block_device_operations 结构体。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1156424870.jpg" alt="20181130202336.jpg"><br>!!!<br></center><br>!!!</p>
+<h4 id="块设备数据结构"><a href="#块设备数据结构" class="headerlink" title="块设备数据结构"></a>块设备数据结构</h4><ul>
+<li>block_device：block_device 结构代表了内核中的一个块设备。它可以表示整个磁盘或一个特定的分区。当这个结构代表一个分区时，它的 bd_contains 成员指向包含这个分区的设备，bd_part 成员指向设备的分区结构。当这个结构代表一个块设备时， bd_disk 成员指向设备的 gendisk 结构。</li>
+<li>gendisk 是一个单独的磁盘驱动器的内核表示。内核还使用 gendisk 来表示分区。</li>
+<li>block_device_operations 结构是块设备对应的操作接口，是连接抽象的块设备操作与具体块设备操作之间的枢纽。</li>
+</ul>
+<p>系统对块设备进行读写操作时，通过块设备通用的读写操作函数将一个请求保存在该设备的操作请求队列（request queue）中，然后调用这个块设备的底层处理函数，对请求队列中的操作请求进行逐一执行。request_queue 结构描述了块设备的请求队列。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">block_device</span> &#123;</span></span><br><span class="line">    <span class="keyword">dev_t</span>           bd_dev;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">inode</span>   *<span class="title">bd_inode</span>;</span> 		<span class="comment">// 分区节点</span></span><br><span class="line">    <span class="keyword">int</span>             bd_openers;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">semaphore</span> <span class="title">bd_sem</span>;</span>        	<span class="comment">// 打开/关闭锁</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">semaphore</span> <span class="title">bd_mount_sem</span>;</span>  	<span class="comment">// 加载互斥锁</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span> <span class="title">bd_inodes</span>;</span></span><br><span class="line">    <span class="keyword">void</span>       	*bd_holder;</span><br><span class="line">    <span class="keyword">int</span>        	bd_holders;</span><br><span class="line">    <span class="keyword">unsigned</span>   	bd_block_size;     	<span class="comment">// 分区块大小</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">block_device</span> 	*<span class="title">bd_contains</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">hd_struct</span>    	*<span class="title">bd_part</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">gendisk</span>      	*<span class="title">bd_disk</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span>    	<span class="title">bd_list</span>;</span></span><br><span class="line">    <span class="keyword">unsigned</span> 	bd_part_count; 		<span class="comment">// 打开次数</span></span><br><span class="line">    <span class="keyword">int</span> 		bd_invalidated;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">backing_dev_info</span> *<span class="title">bd_inode_backing_dev_info</span>;</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> bd_private;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>向内核注册和注销一个块设备可使用如下函数：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">register_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">unregister_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<h4 id="块设备驱动开发"><a href="#块设备驱动开发" class="headerlink" title="块设备驱动开发"></a>块设备驱动开发</h4><ol>
+<li>块设备驱动注册与注销<br>块设备驱动中的第 1 个工作通常是注册它们自己到内核，完成这个任务的函数是 register_blkdev()，其原型为：<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">register_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>与 register_blkdev() 对应的注销函数是 unregister_blkdev()，其原型为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">unregister_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<p>这里，传递给 register_blkdev() 的参数必须与传递给 register_blkdev() 的参数匹配，否则这个函数返回 -EINVAL。</p>
+<ol start="2">
+<li>块设备的请求队列操作<br>标准的请求处理程序能排序请求，并合并相邻的请求，如果一个块设备希望使用标准的请求处理程序，那它必须调用函数 blk_init_queue 来初始化请求队列。当处理在队列上的请求时，必须持有队列自旋锁。初始化请求队列：<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">req_queue_t</span> *blk_init_queue(request_fn_proc *rfn, <span class="keyword">spinlock_t</span> *lock);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>该函数的第 1 个参数是请求处理函数的指针，第 2 个参数是控制访问队列权限的自旋锁，这个函数会发生内存分配的行为，故它可能会失败，函数调用成功时，它返回指向初始化请求队列的指针，否则，返回 NULL。这个函数一般在块设备驱动的模块加载函数中调用。清除请求队列：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blk_cleanup_queue</span><span class="params">(<span class="keyword">request_queue_t</span> * q)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<p>这个函数完成将请求队列返回给系统的任务，一般在块设备驱动模块卸载函数中调用。</p>
+<ol start="3">
+<li>提取请求<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">struct request *<span class="title">elv_next_request</span><span class="params">(<span class="keyword">request_queue_t</span> *<span class="built_in">queue</span>)</span></span>;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>上述函数用于返回下一个要处理的请求（由 I/O 调度器决定），如果没有请求则返回 NULL。</p>
+<ol start="4">
+<li>去除请求<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blkdev_dequeue_request</span><span class="params">(struct request *req)</span></span>;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>上述函数从队列中去除1个请求。如果驱动中同时从同一个队列中操作了多个请求，它必须以这样的方式将它们从队列中去除。</p>
+<ol start="5">
+<li>分配“请求队列”<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">request_queue_t</span> *blk_alloc_queue(<span class="keyword">int</span> gfp_mask);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>对于 FLASH、RAM 盘等完全随机访问的非机械设备，并不需要进行复杂的 I/O 调度，这个时候，应该使用上述函数分配 1 个“请求队列”，并使用如下函数来绑定“请求队列”和“制造请求”函数。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blk_queue_make_request</span><span class="params">(<span class="keyword">request_queue_t</span> * q, make_request_fn * mfn)</span></span>;</span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blk_queue_hardsect_size</span><span class="params">(<span class="keyword">request_queue_t</span> *<span class="built_in">queue</span>, <span class="keyword">unsigned</span> <span class="keyword">short</span> max)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<p>该函数用于告知内核块设备硬件扇区的大小，所有由内核产生的请求都是这个大小的倍数并且被正确对界。但是，内核块设备层和驱动之间的通信还是以 512 字节扇区为单位进行。</p>
+<ol start="6">
+<li>步骤<br>在块设备驱动的模块加载函数中通常需要完成如下工作：<ul>
+<li>分配、初始化请求队列，绑定请求队列和请求函数。</li>
+<li>分配、初始化 gendisk，给 gendisk 的 major、fops、queue等成员赋值，最后添加 gendisk。</li>
+<li>注册块设备驱动。</li>
+</ul>
+</li>
+</ol>
+<p>在块设备驱动的模块卸载函数中通常需要与模块加载函数相反的工作：</p>
+<ul>
+<li>清除请求队列。</li>
+<li>删除 gendisk 和对 gendisk 的引用。</li>
+<li>删除对块设备的引用，注销块设备驱动。</li>
+</ul>
+<hr>
+<h2 id="注册块设备的基本步骤"><a href="#注册块设备的基本步骤" class="headerlink" title="注册块设备的基本步骤"></a>注册块设备的基本步骤</h2><p>内核提供了块设备的相关接口（位于源码文件 /block）。一般情况下，需要进行如下步骤：</p>
+<ol>
+<li>注册一种块设备类型 register_blkdev，传入的参数是要注册的主设备号和设备名称，如果为 0 的话内核会自动为你分配一个主设备号。</li>
+<li>申请一个块设备结构体的实例 alloc_disk。</li>
+<li>对块设备实例进行初始化赋值。</li>
+<li>将实例插入到内核块设备链表上 add_disk。</li>
+</ol>
+<hr>
+<h2 id="编写模块源码"><a href="#编写模块源码" class="headerlink" title="编写模块源码"></a>编写模块源码</h2><h4 id="模块的注册"><a href="#模块的注册" class="headerlink" title="模块的注册"></a>模块的注册</h4><p>模块的注册和卸载通过 module_init(*fn) 和 module_exit(*fn) 进行，其中 *fn 是函数指针，是用于执行初始化或者卸载模块时的具体操作。一个基本的简单模块如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">module_init(darkelf_init);</span><br><span class="line">module_exit(darkelf_exit);</span><br></pre></td></tr></table></figure></p>
+<p>这里的 darkelf_init 是自己定义的对该模块进行初始化的函数；darkelf_exit 是对本模块进行卸载时用于处理释放内存等操作的函数。此外还可以指定对模块的描述信息：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">MODULE_AUTHOR(<span class="string">"XiongXiong &lt;xx@xxiong.me&gt;"</span>);</span><br><span class="line">MODULE_LICENSE(<span class="string">"GPL"</span>);</span><br><span class="line">MODULE_DESCRIPTION(<span class="string">"You got a dream...you gotta protect it!!"</span>);</span><br></pre></td></tr></table></figure></p>
+<ul>
+<li>MODULE_AUTHOR指定本模块的作者，一般是名字+邮箱的格式；</li>
+<li>MODULE_LICENSE是声明本模块的开源协议；</li>
+<li>MODULE_DESCRIPTION是对模块功能的描述信息。</li>
+</ul>
+<h4 id="模块的基本数据结构"><a href="#模块的基本数据结构" class="headerlink" title="模块的基本数据结构"></a>模块的基本数据结构</h4><p>一个模块一般都有个核心的数据结构，这里我们也自己定义一个结构体，结构体中包含一个 kobject 指针，通过 kobject 可以将模块插入内核维护的 kset 链表中，通过这个结构体，我们可以实现将模块中的函数映射到 sys 文件系统中，从而实现通过在用户空间对文件的读写来间接实现控制模块访问内核地址空间等骚操作：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">darkelf</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">kobject</span> *<span class="title">kobj</span>;</span></span><br><span class="line">&#125; *darkelf;</span><br></pre></td></tr></table></figure></p>
+<h4 id="初始化函数"><a href="#初始化函数" class="headerlink" title="初始化函数"></a>初始化函数</h4><p>初始化函数中一般要执行为变量分配内存空间、将 kobject 插入内核等操作。如下的例子中只完成了为 darkelf 变量分配空间，并将 darkelf 的 kobject 插入 kernel_kobj 的操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">int</span> __<span class="function">init <span class="title">darkelf_init</span><span class="params">(<span class="keyword">void</span>)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">int</span> ret = <span class="number">0</span>;</span><br><span class="line">    darkelf = kzalloc(<span class="keyword">sizeof</span>(struct darkelf), GFP_KERNEL);</span><br><span class="line">    <span class="keyword">if</span> (!darkelf) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> out;</span><br><span class="line">    &#125;</span><br><span class="line">    darkelf-&gt;kobj = kobject_create_and_add(<span class="string">"darkelf"</span>, kernel_kobj);</span><br><span class="line">    <span class="keyword">if</span> (!(darkelf-&gt;kobj)) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> free_darkelf;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">free_darkelf:</span><br><span class="line">    kfree(darkelf);</span><br><span class="line">out:</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="注销函数"><a href="#注销函数" class="headerlink" title="注销函数"></a>注销函数</h4><p>注销模块一般是删除模块信息、回收内存等操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">void</span> __<span class="function"><span class="built_in">exit</span> <span class="title">darkelf_exit</span><span class="params">(<span class="keyword">void</span>)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    kobject_put(darkelf-&gt;kobj);</span><br><span class="line">    kfree(darkelf);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="注册-sysfs-文件节点"><a href="#注册-sysfs-文件节点" class="headerlink" title="注册 sysfs 文件节点"></a>注册 sysfs 文件节点</h4><p>内核通过 sysfs 来实现将模块中的函数映射到一个文件上，从而实现对模块的读写。内核提供了函数 sysfs_create_group() 来实现映射，通过 sysfs_remove_group() 删除映射，具体过程如下。</p>
+<p>首先我们随便定义一个变量b，用来存储用户空间传来的值：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">int</span> b;</span><br></pre></td></tr></table></figure></p>
+<p>然后定义 kobj_attribute，并指定对变量 b 的操作函数：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">kobj_attribute</span> <span class="title">darkelf_gate</span> =</span></span><br><span class="line"><span class="class">       __<span class="title">ATTR</span>(<span class="title">gate</span>, 0664, <span class="title">darkelf_show</span>, <span class="title">darkelf_store</span>);</span></span><br></pre></td></tr></table></figure></p>
+<p>其中 0664 表示将 darkelf_b 映射到 sysfs 形成文件后的访问权限，文件的读写分别映射到函数：darkelf_show 和 darkelf_store上。通过这种方式，在用户空间对该文件执行 echo 或 cat 后，具体的读写都将由这两个函数完成。读写函数可以随便操作，例如下图中，show 执行的操作是将 b 中的值打印出来；store 执行的操作是将用户空间发来的数据转换成 10 进制的 int 类型然后保存到b中：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> ssize_t <span class="title">darkelf_show</span><span class="params">(struct kobject *kobj, </span></span></span><br><span class="line"><span class="function"><span class="params">        struct kobj_attribute *attr, <span class="keyword">char</span> *buf)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> ssize_t <span class="title">darkelf_store</span><span class="params">(struct kobject *kobj, </span></span></span><br><span class="line"><span class="function"><span class="params">        struct kobj_attribute *attr, <span class="keyword">const</span> <span class="keyword">char</span> *buf, <span class="keyword">size_t</span> cnt)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">int</span> ret = <span class="number">0</span>;</span><br><span class="line">    ret = kstrtoint(buf, <span class="number">10</span>, &amp;b);</span><br><span class="line">    <span class="keyword">if</span> (ret &lt; <span class="number">0</span>)</span><br><span class="line">        <span class="keyword">return</span> ret;</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>再然后定义 attributes 和 attribute_group，如下的例子：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">attribute</span> *<span class="title">darkelf_attrs</span>[] = &#123;</span></span><br><span class="line">    &amp;darkelf_gate.attr,</span><br><span class="line">    <span class="literal">NULL</span>,</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">attribute_group</span> <span class="title">darkelf_attr_group</span> = &#123;</span></span><br><span class="line">    .attrs = darkelf_attrs,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>准备工作完成后，只需要在 init 和 exit 中分别将创建和删除的函数插入，就完成初始化过程了。</p>
+<hr>
+<h2 id="编写-Makefile"><a href="#编写-Makefile" class="headerlink" title="编写 Makefile"></a>编写 Makefile</h2><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">obj-m := darkelf.o</span><br><span class="line">CURRENT_PATH := $(shell pwd)</span><br><span class="line">LINUX_KERNEL_PATH := /root/linux<span class="number">-4.4</span><span class="number">.126</span></span><br><span class="line">all:</span><br><span class="line">        $(MAKE) -C $(LINUX_KERNEL_PATH) M=$(CURRENT_PATH) modules</span><br></pre></td></tr></table></figure>
+<p>首先第一行指定将模块编译成独立模块的形式，第三行获取当前的路径，第四行是内核源码的路径。通过这种方式，可以在不用反复编译内核的情况下，将模块编译出来。make 将自动从内核所在路径中加载需要的头文件。通过执行 make all 来完成编译：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)make all</span><br><span class="line">make -C /root/linux-4.4.126 M=/root/darkelf modules</span><br><span class="line">make[1]: Entering directory <span class="string">'/root/linux-4.4.126'</span></span><br><span class="line">  CC [M]  /root/darkelf/darkelf.o</span><br><span class="line">  Building modules, stage 2.</span><br><span class="line">  MODPOST 1 modules</span><br><span class="line">  CC      /root/darkelf/darkelf.mod.o</span><br><span class="line">  LD [M]  /root/darkelf/darkelf.ko</span><br><span class="line">make[1]: Leaving directory <span class="string">'/root/linux-4.4.126'</span></span><br></pre></td></tr></table></figure></p>
+<p>然后当前路径下将出现一个 darkelf.ko，这就是模块文件。<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)ls -lh</span><br><span class="line">total 688K</span><br><span class="line">-rw-r--r-- 1 root root 3.8K Apr 25 15:54 darkelf.c</span><br><span class="line">-rw-r--r-- 1 root root 329K Apr 25 17:08 darkelf.ko</span><br><span class="line">-rw-r--r-- 1 root root  561 Apr 25 17:08 darkelf.mod.c</span><br><span class="line">-rw-r--r-- 1 root root  93K Apr 25 17:08 darkelf.mod.o</span><br><span class="line">-rw-r--r-- 1 root root 241K Apr 25 17:08 darkelf.o</span><br><span class="line">-rw-r--r-- 1 root root  156 Apr  3 19:26 Makefile</span><br><span class="line">-rw-r--r-- 1 root root   32 Apr 25 17:08 modules.order</span><br><span class="line">-rw-r--r-- 1 root root    0 Apr  3 19:31 Module.symvers</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="执行编译并测试模块"><a href="#执行编译并测试模块" class="headerlink" title="执行编译并测试模块"></a>执行编译并测试模块</h2><p>通过 insmod 将模块插入内核中，通过 rmmod 将模块弹出：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)insmod ./darkelf.ko</span><br><span class="line">root@AE86_&lt;darkelf&gt;(lab1)rmmod darkelf</span><br></pre></td></tr></table></figure></p>
+<p>进入 /sys/kernel 中，会发现有一个名为 darkelf 的目录，该目录下有一个文件 b：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;ll</span><br><span class="line">total 0</span><br><span class="line">-rw-r--r-- 1 root root 4K Apr 25 17:17 b</span><br><span class="line">root@AE86_&lt;darkelf&gt;<span class="built_in">pwd</span></span><br><span class="line">/sys/kernel/darkelf</span><br></pre></td></tr></table></figure></p>
+<p>测试对文件的读写：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;cat b</span><br><span class="line">0</span><br><span class="line">root@AE86_&lt;darkelf&gt;<span class="built_in">echo</span> 12345 &gt; b &amp; cat b</span><br><span class="line">12345</span><br></pre></td></tr></table></figure></p>
+<p>查看调试信息：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;dmesg | tail -n 2</span><br><span class="line">[  156.351914] DARKELF: ghost has fall down.</span><br><span class="line">[  159.732729] DARKELF: dark elf has gone away.</span><br></pre></td></tr></table></figure></p>
+<p>查看模块 .ko 的信息：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)readelf -h darkelf.ko</span><br><span class="line">ELF Header:</span><br><span class="line">  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00</span><br><span class="line">  Class:                             ELF64</span><br><span class="line">  Data:                              2<span class="string">'s complement, little endian</span></span><br><span class="line"><span class="string">  Version:                           1 (current)</span></span><br><span class="line"><span class="string">  OS/ABI:                            UNIX - System V</span></span><br><span class="line"><span class="string">  ABI Version:                       0</span></span><br><span class="line"><span class="string">  Type:                              REL (Relocatable file)</span></span><br><span class="line"><span class="string">  Machine:                           Advanced Micro Devices X86-64</span></span><br><span class="line"><span class="string">  Version:                           0x1</span></span><br><span class="line"><span class="string">  Entry point address:               0x0</span></span><br><span class="line"><span class="string">  Start of program headers:          0 (bytes into file)</span></span><br><span class="line"><span class="string">  Start of section headers:          322160 (bytes into file)</span></span><br><span class="line"><span class="string">  Flags:                             0x0</span></span><br><span class="line"><span class="string">  Size of this header:               64 (bytes)</span></span><br><span class="line"><span class="string">  Size of program headers:           0 (bytes)</span></span><br><span class="line"><span class="string">  Number of program headers:         0</span></span><br><span class="line"><span class="string">  Size of section headers:           64 (bytes)</span></span><br><span class="line"><span class="string">  Number of section headers:         29</span></span><br><span class="line"><span class="string">  Section header string table index: 28</span></span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="编写块设备源码"><a href="#编写块设备源码" class="headerlink" title="编写块设备源码"></a>编写块设备源码</h2><p>定义一个结构体，其中包含一个 gendisk 指针和请求队列指针<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">darkelf</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">kobject</span> *<span class="title">kobj</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">gendisk</span> *<span class="title">disk</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">request_queue</span> *<span class="title">queue</span>;</span></span><br><span class="line">&#125; *darkelf;</span><br></pre></td></tr></table></figure></p>
+<p>初始化一个对当前块设备的操作方法<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">block_device_operations</span> <span class="title">elf_fops</span> = &#123;</span></span><br><span class="line">    .owner    = THIS_MODULE,</span><br><span class="line">    .open     = elf_open,</span><br><span class="line">    .release  = elf_release,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>这里先让 elf_open 和 elf_release 两个函数返回空值<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">elf_open</span><span class="params">(struct block_device *bdev, <span class="keyword">fmode_t</span> mode)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">     <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">elf_release</span><span class="params">(struct gendisk *disk, <span class="keyword">fmode_t</span> mode)</span> </span>&#123; &#125;</span><br></pre></td></tr></table></figure></p>
+<p>通过 register_blkdev 注册一个新的设备类型<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">elf_major = register_blkdev(<span class="number">0</span>, <span class="string">"darkelf"</span>);</span><br></pre></td></tr></table></figure></p>
+<p>初始化块设备和请求队列<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">darkelf-&gt;disk = alloc_disk(<span class="number">16</span>);</span><br><span class="line"><span class="keyword">if</span> (!darkelf-&gt;disk) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> free_group;</span><br><span class="line">&#125;</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span> = blk_alloc_queue_node(GFP_KERNEL, NUMA_NO_NODE);</span><br><span class="line"><span class="keyword">if</span> (!darkelf-&gt;<span class="built_in">queue</span>) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> free_disk;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>对请求队列和块设备实例进行初始化<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">blk_queue_make_request(darkelf-&gt;<span class="built_in">queue</span>, elf_queue_bio);</span><br><span class="line">BUG_ON(!darkelf-&gt;<span class="built_in">queue</span>);</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span>-&gt;nr_queues = <span class="number">1</span>;</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span>-&gt;queuedata = darkelf;</span><br><span class="line"></span><br><span class="line">queue_flag_set_unlocked(QUEUE_FLAG_NONROT, darkelf-&gt;<span class="built_in">queue</span>);</span><br><span class="line">queue_flag_clear_unlocked(QUEUE_FLAG_ADD_RANDOM, darkelf-&gt;<span class="built_in">queue</span>);</span><br><span class="line">blk_queue_logical_block_size(darkelf-&gt;<span class="built_in">queue</span>, <span class="number">512</span>);</span><br><span class="line">blk_queue_physical_block_size(darkelf-&gt;<span class="built_in">queue</span>, <span class="number">512</span>);</span><br><span class="line"></span><br><span class="line"><span class="built_in">strncpy</span>(darkelf-&gt;disk-&gt;disk_name, <span class="string">"darkelf"</span>, DISK_NAME_LEN);</span><br><span class="line">darkelf-&gt;disk-&gt;flags = GENHD_FL_EXT_DEVT;</span><br><span class="line">darkelf-&gt;disk-&gt;major = elf_major;</span><br><span class="line">darkelf-&gt;disk-&gt;first_minor = <span class="number">7</span>;</span><br><span class="line">darkelf-&gt;disk-&gt;fops = &amp;elf_fops;</span><br><span class="line">darkelf-&gt;disk-&gt;<span class="built_in">queue</span> = darkelf-&gt;<span class="built_in">queue</span>;</span><br><span class="line">darkelf-&gt;disk-&gt;private_data = (<span class="keyword">void</span>*)darkelf;</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span>-&gt;queuedata = (<span class="keyword">void</span>*)darkelf;</span><br><span class="line">set_capacity(darkelf-&gt;disk, <span class="number">1024</span>);</span><br></pre></td></tr></table></figure></p>
+<p>通过 add_disk 将块设备实例插入内核<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">add_disk(darkelf-&gt;disk);</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="编译并测试块设备"><a href="#编译并测试块设备" class="headerlink" title="编译并测试块设备"></a>编译并测试块设备</h2><p>编译所需要的 Makefile 采用实验二的 Makefile，执行 make 后，将生成 darkelf.ko，然后通过 insmod darkelf.ko 将该模块插入内核中。首先查看 /dev 下面我们插进去的模块：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;dev&gt;ls -lah /dev | grep darkelf</span><br><span class="line">brw-------  1 root root      249,   0 Apr 25 17:15 darkelf</span><br></pre></td></tr></table></figure></p>
+<p>通过 lsblk 查看块设备：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;dev&gt;lsblk</span><br><span class="line">NAME     MAJ:MIN 	RM 	SIZE 	RO 	TYPE 	MOUNTPOINT</span><br><span class="line">sda        8:0    	0  	50G  	0 	disk</span><br><span class="line">└─sda1     8:1   	0  	50G  	0 	part 	/</span><br><span class="line">darkelf  249:7		0	512K	0	disk</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="答疑补充"><a href="#答疑补充" class="headerlink" title="答疑补充"></a>答疑补充</h2><h4 id="Makefile-编写的注意事项"><a href="#Makefile-编写的注意事项" class="headerlink" title="Makefile 编写的注意事项"></a>Makefile 编写的注意事项</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1733982065.jpg" alt="20181130202337.jpg"><br>!!!<br></center><br>!!!</p>
+<h4 id="模块验证失败警告的处理"><a href="#模块验证失败警告的处理" class="headerlink" title="模块验证失败警告的处理"></a>模块验证失败警告的处理</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">[   276.204699] darkelf: module verification failed: signature and/or required ....</span><br></pre></td></tr></table></figure>
+<p>Makefile 中加入下面语句关闭验证<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">CONFIG_MODULE_SIG=n</span><br></pre></td></tr></table></figure></p>
+<h4 id="文件内核版本与当前内核版本不一致的问题"><a href="#文件内核版本与当前内核版本不一致的问题" class="headerlink" title="文件内核版本与当前内核版本不一致的问题"></a>文件内核版本与当前内核版本不一致的问题</h4><ol>
+<li>内核版本不一样<ul>
+<li>切换当前内核版本为源码的内核版本</li>
+<li>或将链接的内核源码改成与当前内核版本相同的源码</li>
+</ul>
+</li>
+<li>内核版本相同，但只人为修改了版本号<ul>
+<li>将源码版本号修改回来再编译</li>
+</ul>
+</li>
+</ol>
+<p>例如：linux-4.4.128-20154043 修改回 linux-4.4.128</p>
+<h4 id="编译问题————在-Ubuntu-下编译内核的各种依赖问题"><a href="#编译问题————在-Ubuntu-下编译内核的各种依赖问题" class="headerlink" title="编译问题————在 Ubuntu 下编译内核的各种依赖问题"></a>编译问题————在 Ubuntu 下编译内核的各种依赖问题</h4><ol>
+<li>安装 ncurses 库失败<ul>
+<li>首先，安装 ncurses 库的目的————使用 make menuconfig 时以可视化的方式进行编译选项的选择。事实上这种方式很鸡肋。解决方法：不用安装 ncurses 库，使用 make oldconfig 进行编译选项的选择，配合当前系统中已有的 .config，可以直接一路回车键默认选过去。需要修改某个模块的编译选项时，可以直接用编辑器编辑 .config 文件。</li>
+</ul>
+</li>
+<li><p>使用 make-kpkg 工具</p>
+<ul>
+<li><p>不需要安装这个工具，直接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">make modules_install &amp; make install</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>若要清理中间文件，可以直接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">make clean</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+</li>
+<li><p>修改 grub 文件</p>
+<ul>
+<li>不需要</li>
+</ul>
+</li>
+</ol>
+<h4 id="一图流编译总结！！！"><a href="#一图流编译总结！！！" class="headerlink" title="一图流编译总结！！！"></a>一图流编译总结！！！</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1820028190.jpg" alt="20181130202338.jpg"><br>!!!<br></center><br>!!!</p>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/UFS-Host-Controller/">
+      UFS Host Controller 工作流程
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>该文档描述了 UFS Host Controller 的主要运作流程以及 qemu 中，host controller 的接口函数设计。该文档的内容均参考自 JEDEC STANDARD JESD223C 标准配置文档以及 qemu 中设备模拟源代码。</p>
+<hr>
+<h2 id="UFS-架构图"><a href="#UFS-架构图" class="headerlink" title="UFS 架构图"></a>UFS 架构图</h2><p>JESD223C 为 UFS 设备定义了一个通用的 host controller interface（HCI）, 主机的驱动程序通过与 HCI 工作，达到与 UFS 设备进行交互的目的。该标准定义了寄存器级的 HCI 设计，负责主机 software 和 UFS 设备间的接口管理和数据传输。如下架构图：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3868930820.jpg" alt="20181130202321.jpg"><br>!!!<br></center><br>!!!</p>
+<p>蓝色双向箭头上方的为主机软件部分，下方为硬件部分（host controller 以及 UFS 设备）。该项目中使用 Qemu 进行模拟的代码主要为实现下图中 UFS Host Controller Interface 的功能。</p>
+<h4 id="接口架构"><a href="#接口架构" class="headerlink" title="接口架构"></a>接口架构</h4><p>主机的 software 通过内存中的一系列 host registers 和一些称为 Transfer Request Descriptors 的数据结构来与 Host controller 硬件进行交互。UFSHCI 定义了两种接口空间。MIMO Space 以及 Host Memory Space，下图展示除了 UFS HCI 的概念框图。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/3259455945.jpg" alt="20181130202322.jpg"><br>!!!<br></center><br>!!!</p>
+<h4 id="MMIO-Space"><a href="#MMIO-Space" class="headerlink" title="MMIO Space"></a>MMIO Space</h4><p>在这个空间中，hardware register 被定义为 host software 的接口，通过 MMIO 的方式被实现，主要包含了下面三种类型的寄存器：</p>
+<ol>
+<li>Host Controller Capability Registers. 这些寄存器提供了关于 Host controller 功能的描述</li>
+<li>Runtime and Operation Registers，包括对以下几种功能的支持。<ul>
+<li>Interrupt configuration. 这些寄存器为 host software 提供了使能/中止以及中断状态的接口。</li>
+<li>Host controller status. 该寄存器显示 host controller 的状态，并允许主机 software 初始化/禁用 host controller</li>
+<li>UTP transfer Request List management. 这些寄存器给 UTP Transfer Request List 提供了接口。</li>
+<li>UTP Task Management request lists management. 这些寄存器为 UTP Task Management request list 提供了一个接口。</li>
+<li>UIC Command Registers。这些寄存器为 Unipro 配置以及控制提供了接口。</li>
+</ul>
+</li>
+<li>Vendor Specific Registers. 由供应商进行定义。</li>
+</ol>
+<h4 id="Host-Memory-Space"><a href="#Host-Memory-Space" class="headerlink" title="Host Memory Space"></a>Host Memory Space</h4><p>该空间中包含了能够描述将执行命令和命令中数据缓存的数据结构。简单地可以理解为：UTP Transfer Request List 管理通用的 IO 命令，而 UTP Task Mangement Request List 对应管理命令。</p>
+<hr>
+<h2 id="传输请求接口（Transfer-Request-Interface）"><a href="#传输请求接口（Transfer-Request-Interface）" class="headerlink" title="传输请求接口（Transfer Request Interface）"></a>传输请求接口（Transfer Request Interface）</h2><p>一个 UFS 的 host systerm 由一些硬件和软件层组成（host controller 和 host software）。下图展示了其层次结构。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2515594948.jpg" alt="20181130202323.jpg"><br>!!!<br></center><br>!!!</p>
+<p>前面定义的数据结构和寄存器就是为了实现上图中的这 4 个 service access points(SAPs) 而定义。分别为 UIO_SAP, UDM_SAP, UTP_CMD, UTP_TM_SAP。为了管理 host software 和 UFS 设备间的通信，host controller 为主机 software 发送出传输请求提供了如下 3 个独立的接口。</p>
+<ol>
+<li>UTP Transfer Request List. 该 List 由一系列名为 Transfer Request Descriptor(UTRD) 的数据结构构成，最多为 32 个。UTRD 详细描述了一个即将被执行的命令以及相关的数据。UFS 的主机 software 通过将一个 UTRD 插入这个 list 并且提示 Host controller doorbell 来发起一个命令。然后，命令就会按在 list 中的顺序被分派，但是被执行完成的顺序可能会改变。此时，host controller 就代表处理器管理与这个命令有关的所有数据传输的操作。命令完成将产生中断或者更新 UTRD 中的状态字段。</li>
+<li>UTP Task Management Request List. 该 list 包含了名为 UFS Task Management Request Descriptor（UTMRD）的数据结构。UTMRD 详细描述了 host software 希望设备执行的任务管理函数。所有的 Task Management Request 将优先于上面 UTP Transfer Request 的执行，两者的处理流程类似。</li>
+<li>UIC Command Register. 这个寄存器集是被主机 software 直接用来执行一个 UIC 命令。</li>
+</ol>
+<hr>
+<h2 id="UFS-Transport-Protocol-（UTP）Layer-简述"><a href="#UFS-Transport-Protocol-（UTP）Layer-简述" class="headerlink" title="UFS Transport Protocol （UTP）Layer 简述"></a>UFS Transport Protocol （UTP）Layer 简述</h2><p>host driver 与 UTP 层直接联系，而两者的交流是被分为一系列的消息（messages），这些消息根据标准组织为 UFS Protocol Information Units(UPIU) 的格式。UFS2.1 文档中的表 10-2 解释了不同种类型的 UPIU 的描述，比如 NOP Out, Command, Response，Data Out 等类型。UPIU 的内容是存放在名为 UTP Command Descriptor（UCD）的数据结构中，而前面所介绍的 UTRD（UTP Transfer Request descriptor）中存放有指向 UCD 的指针。</p>
+<h4 id="一个数据传输命令的示例"><a href="#一个数据传输命令的示例" class="headerlink" title="一个数据传输命令的示例"></a>一个数据传输命令的示例</h4><p>数据在 host memory, host controller, device 三者之间都可以理解为以 UPIU 的形式来进行传递。下图给出了一个从 host 端到 device 端传输 577 byte 数据的例子：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/744205718.png" alt="20181130202331.png"><br>!!!<br></center><br>!!!</p>
+<p>可以假设这是一个写 577 byte 到设备上的命令。由 Command UPIU 开始，告知所需要写的数据信息，收到 RTT UPIU（ready to transfer），表示 device 可以接受数据传输，通过 DATA OUT UPIU 进行数据的传输。可以看到途中 Data OUT UPIU 的顺序可以改变的。最终收到 Response UPIU 表示这一次写命令的结束。其他命令的执行过程类似。</p>
+<hr>
+<h2 id="Host-software-与-Host-controller-的具体交互流程"><a href="#Host-software-与-Host-controller-的具体交互流程" class="headerlink" title="Host software 与 Host controller 的具体交互流程"></a>Host software 与 Host controller 的具体交互流程</h2><p>根据标准中的描述，Software 对于 UFS HCI 的操作分为三大部分：Host controller 配置和控制，数据传输操作，任务任务管理。下面部分中所提及到的寄存器及其字段都能够在 UFS HCI2.1 文档中第 5 章中查到。</p>
+<h4 id="Host-Controller-初始化"><a href="#Host-Controller-初始化" class="headerlink" title="Host Controller 初始化"></a>Host Controller 初始化</h4><p>当主机控制器出现上电复位时，所有 MMIO 寄存器都将处于其上电默认状态，并且链路将处于非活动状态（inactive）。 以下是主机软件将执行的操作序列以初始化 host controller：</p>
+<ol>
+<li>启动 host controller 的第一步是正确编程系统总线接口。 这一步与控制器实现所使用的系统总线有关，因此应遵循特定系统总线的文档。该步完成时，控制器应准备好在系统总线上传输数据。</li>
+<li>为了启用主机控制器，将 1 写入 HCE(host controller enable) 寄存器。 这触发了本地 UIC 层的自主基本初始化(autonomous basic initialization)。 初始化序列应由 DME_RESET 和 DME_ENABLE 命令组成。 可以根据实现需要添加其他命令，如 DME_SET 命令。 在基本初始化序列期间，HCE 的值一直为 0。</li>
+<li>等待 HCE 读为 1 的时候继续。 表示基本的初始化序列已经完成。</li>
+<li>附加命令（如 DME_SET 命令）可以从系统主机发送到 UFS 主机控制器，以提供配置灵活性。</li>
+<li>可选地将 IE.UCCE(UIC command completion enable)设置为 1，以便使能 IS.UCCS(UIC Command Completion Status)中断。</li>
+<li>发送 DME_LINKSTARTUP 命令以开始链路启动过程 (link startup procedure)</li>
+<li>完成 DME_LINKSTARTUP 命令设置 IS.UCCS 位.如果设置了 IE.UCCE，则可以向系统主机标记中断, 该中断将独立于 GenericErrorCode 进行标记。</li>
+<li>如果完成的 DME_LINKSTARTUP 命令的 GenericErrorCode 为 SUCCESS，那么除了 IS.UCCS 位之外，还将设置 HCS.DP(device present)。</li>
+<li>检查 HCS.DP 的值，并确保连接有一个设备。 如果检测到设备的存在，转到步骤 10;否则，在 IS.ULSS 设置为 1 后重新发送 DME_LINKSTARTUP 命令（转到步骤 6）。 IS.ULSS 等于 1 表示 UFS 设备已准备好进行链接启动。</li>
+<li>通过编程 IE 寄存器来启用附加中断。</li>
+<li>以阈值（IACTH）和超时（IATOVAL）的所需要的值来初始化中断聚合控制寄存器（UTRIACR）。注意当运行/停止寄存器（UTRLRSR）未被使能或没有请求未完成时，也可以随时执行UTRIACR初始化。</li>
+<li>如果需要，通过 UIC 命令界面 (interface) 完成主机控制器配置。</li>
+<li>分配和初始化 UTP 任务管理请求列表。(Allocate and initalize UTP Task Management Request List)</li>
+<li>编程 UTP Task Management Request List 的起始地址，并且用一个 64 位地址指针指向它。</li>
+<li>分配和初始化 UTP 传输请求列表（UTP Transfer Request List）</li>
+<li>编程 UTP Transfer Request List 的起始地址，并且用一个 64 位地址指针指向它。</li>
+<li>通过将 UTP 任务管理请求列表 Run-Stop Register（UTMRLRSR）设置为 1，启用 UTP Task-Mangement Request List。 该操作允许 host controller 通过 UTP Task Management Request Door Bell 机制开始接受 UTP 任务管理请求。</li>
+<li>通过将 UTP 传输请求列表 Run-Stop Register（UTRLRSR）设置为 ‘1’ 来启用 UTP Transfer Request List。该操作允许主机控制器通过 UTP Transfer Request Door Bell 机制开始接受 UTP 传输请求。</li>
+<li>bMaxNumOfRTT 将被设置为 bDeviceRTTCap 和 NORTT 的最小值。</li>
+</ol>
+<h4 id="配置与控制"><a href="#配置与控制" class="headerlink" title="配置与控制"></a>配置与控制</h4><p>一旦主机控制器复位，主机软件就可以使用 UIC 命令寄存器来配置和控制链路以及连接的设备。 主机软件负责配置 UFS 互连堆栈和连接的设备。 在对 UIC 命令寄存器编程时，只有在设置了所有 UIC 命令参数寄存器（UICCMDARG1，UICCMDARG2 和UICCMDARG3）之后，主机软件才能设置寄存器 UICCMD。 检查执行 UIC 命令的状态有两种选择：</p>
+<ol>
+<li>通过中断机制。在将 UIC 命令发送到主机控制器执行之前，软件通过设置 UIC 命令完成启用寄存器 IE.UCCE 来启用 UIC 命令完成中断。命令执行完成后，主机控制器将产生一个中断，并将寄存器设置为 UIC COMMAND 完成状态寄存器 ‘1’。</li>
+<li>Software pulling。在将 UIC 命令发送到主机控制器执行之后，软件将持续 pulling UIC 命令完成状态，直到它返回 “1”。<br>一旦命令完成，软件可以检查返回/状态代码（如果适用于该命令）。</li>
+</ol>
+<h4 id="CRYPTOCFG-配置过程（与数据加密有关，模拟中可以简化舍弃）"><a href="#CRYPTOCFG-配置过程（与数据加密有关，模拟中可以简化舍弃）" class="headerlink" title="CRYPTOCFG 配置过程（与数据加密有关，模拟中可以简化舍弃）"></a>CRYPTOCFG 配置过程（与数据加密有关，模拟中可以简化舍弃）</h4><p>要在 CRYPTOCFG 阵列中配置一个 entry，software 需遵循以下步骤：</p>
+<ol>
+<li>在 CRYPTOCFG 数组中选择一个条目 x-CRYPTOCFG</li>
+<li>如果条目未启用，比如 x-CRYPTOCFG.CFGE == 0，跳到步骤 5</li>
+<li>验证没有待处理的事务在其 CCI 字段中引用 x-CRYPTOCFG，即对于所有挂起的事务，UTRD.CCI≠x。验证完毕后，进入步骤 4</li>
+<li>通过将 0000h 写入 x-CRYPTOCFG 的 DW16 清除 x-CRYPTOCFG.CFGE 位。此操作也会清除 CAPIDX 和 DUSIZE 字段</li>
+<li>根据以下规则将加密密钥写入 x-CRYPTOCFG.CRYPTOKEY 字段：<ul>
+<li>按照 6.3 节中列出的算法特定布局组织密钥。 没用过 CRYPTOKEY 的区域应该用零写</li>
+<li>密钥以小端格式写入：CRYPTOKEY [0] 的字节 0，字节 1 到 CRYPTOKEY <a href="http://blog.xxiong.me/usr/uploads/2018/12/3868930820.jpg" target="_blank" rel="noopener">1</a>，字节 15 到 CRYPTOKEY [15] 等。</li>
+<li>CRYPTOKEY 的内容应该从 DW0 到 DW15 顺序地在一个原子操作集中写入</li>
+</ul>
+</li>
+<li>选择写入 x-CRYPTOCFG 的 DW17</li>
+<li>用 CAPIDX，DUSIZE和CFGE = 1 写入 x-CRYPTOCFG 的 DW16</li>
+</ol>
+<p>只有在上述程序完成之后，软件才可以使用新的配置，通过 UTRD.CCI = x 来发起一个 transaction。</p>
+<hr>
+<h2 id="创建一个-UTP-Transfer-Request-的基本步骤"><a href="#创建一个-UTP-Transfer-Request-的基本步骤" class="headerlink" title="创建一个 UTP Transfer Request 的基本步骤"></a>创建一个 UTP Transfer Request 的基本步骤</h2><p>Host controller 复位和配置完成后，software 可以使用 UTP Transfer Request List（UTRL）将 UTP 命令传递到连接到链路的 UFS 设备。UTRL 是位于系统内存中的 list buffer，用于将命令从软件传递到设备。software 负责根据 CAP.NUTRS 的值选择 UTRL 大小。通常，软件应该选择 32 entry 选项，除非系统功能规定了较小的内存占用。当主机软件需要向主机控制器发送 UTP 命令时，它使用 UTP 传输请求列表。 以下是主机 software 构建 UTP 传输请求的步骤。</p>
+<ol>
+<li>通过读取 UTRLDBR 寄存器找到一个空的传输请求 slot。An empty transfer request slot 在 UTRLDBR 中的相应位的值为 0。</li>
+<li>主机软件在空 slot 中构建 UTRD。<ul>
+<li>编程字段 CT（command type），用于指示命令类型：SCSI，原生 UFS 命令或设备管理函数</li>
+<li>编程 DD 字段，其作为命令的一部分包含了数据操作的方向。</li>
+<li>如果软件请求将命令标记为中断命令（IS.UTRCS 在命令完成时设置），则 I（中断）    置 1。 如果软件请求将该命令标记为常规命令，该位将被清除。</li>
+<li>用’Fh’初始化 OCS。</li>
+<li>分配和初始化 UCD（UTP command descriptor）。</li>
+<li>用一个 UTP command 来编程 UPIU Command 字段，在 UCD 中，不包括任务管理功能。</li>
+<li>在 UCD 中用’0’初始化字段 response UPIU。</li>
+<li>如果需要，填写与数据相关的所有数据缓冲区的指针和 PRDT(Physical Region Descriptal Table) 的大小。</li>
+</ul>
+</li>
+<li>用 UCD(UTP Command Desciptor) 的起始地址编程字段 UCDBA 和 UCDBAU。</li>
+<li>用在 UCD 中的 Response UPIU 的 offset 来编程 RUO（Response UPIU Offset）字段。</li>
+<li>用 Response UPIU 的长度来编程 RUL 字段（Response UPIU Length）。</li>
+<li>如果需要的话，用在 UCD 中的 PRDT 字段的偏移量来编程 PRDTO 字段。</li>
+<li>如果需要的话，用 PRDT 的长度来编程 PRDTO 字段。对每一个将要被发送到 host controller 的命令，都要重复如上 1-7 的步骤。</li>
+<li>检查寄存器 UTRLRSR（UTP Transfer Request Run-Stop Register），并确保在继续之前读取的值为“1”。</li>
+<li>设置 UTP 传输请求中断聚合控制寄存器（UTRIACR）使能位为“1”以使能中断。</li>
+<li>将计数器和定时器复位（CTR）位设置为’1’以复位与中断相关的计数器和定时器。</li>
+<li>编程字段中断聚合计数器阈值（IACTH）与产生中断所需的命令完成次数。</li>
+<li>编程字段中断聚合超时值（IATOVAL）with 允许的响应到达主机控制器之间的最大时间和产生中断。</li>
+<li>设置 UTRLDBR 寄存器来 ring the doorbell register 告知 host controller 一个或多个 transfer requests 已经准备好发送给对那个的设备。Host software 应该仅仅写‘1’到对应命令的 bit position。其他在 UTRLDBR 中的位应该被写‘0’，表示当前的值没有改变。</li>
+</ol>
+<hr>
+<h2 id="UPIU的执行过程"><a href="#UPIU的执行过程" class="headerlink" title="UPIU的执行过程"></a>UPIU的执行过程</h2><h4 id="由主机-software-产生的-Outbound-UPIU"><a href="#由主机-software-产生的-Outbound-UPIU" class="headerlink" title="由主机 software 产生的 Outbound UPIU"></a>由主机 software 产生的 Outbound UPIU</h4><p>除了 DATA OUT UPIU 之外，所有其他 UFS 定义的 Outbound UPIU 必须通过软件 compose 并存储在 host memory 中。 然后，Host controller 通过 DMA 从 memory 中取出 outbound UPIU，并使用本地 UniPro 堆栈将其分派到 UFS 设备。 UTP engine 仅对 outbound UPIU 的 LUN 和 task tag字段进行分析，以便能够匹配未来相应的inbound UPIU。 注意，对于QUERY REQUEST和NOP OUT UPIU，LUN字段保留，不会用于匹配(因为不需要)。</p>
+<h4 id="由Host-Controller生成的Outbound-UPIU"><a href="#由Host-Controller生成的Outbound-UPIU" class="headerlink" title="由Host Controller生成的Outbound UPIU"></a>由Host Controller生成的Outbound UPIU</h4><p>只有DATA OUT UPIU由UTP engine自动生成，无需software介入。 Data Out UPIU是响应来自设备的Ready To Transfer（RTT）UPIU 而创建的，而UPIU又由先前向Command UPIU发送到设备。 UTP engine使用来自相应的RTT UPIU和与原始命令UPIU相关联的PRD表的信息。过程如上图4所示。</p>
+<h4 id="由Software解析的Inbound-UPIUs"><a href="#由Software解析的Inbound-UPIUs" class="headerlink" title="由Software解析的Inbound UPIUs"></a>由Software解析的Inbound UPIUs</h4><p>UTP engine 应分析任务标签，在适用的情况下分析UFS主机接收到的所有UPIU的LUN字段，以便它们可以匹配先前从UFS主机发送到UFS设备的UPIU（请求/响应匹配）具有task tag和LUN字段的UPIUs从UFS设备端传送过来被接收，并且匹配之前由UFS HOST发送的UPIU，它将被传送进入Host memory中相应的Descriptor。只有准备转移（RTT）和数据在UPIU中的处理方式不同，UTP Engine将进一步分析，以实现自主数据传输操作。对于host controller来说，接收到如Response，Task management Response等类型的UPIU是就标志着一个UTP Transaction的关闭。最终，UTRLDBR的相应位会被清除。</p>
+<h4 id="由Host-Controller进行解析的Inbound-UPIUs"><a href="#由Host-Controller进行解析的Inbound-UPIUs" class="headerlink" title="由Host Controller进行解析的Inbound UPIUs"></a>由Host Controller进行解析的Inbound UPIUs</h4><p>Data in 和 Ready to Transfer UPIU完全由Host controller/ UTP引擎处理，并且在处理它们时不涉及software。 数据在UPIU中携带从UFS设备检索的数据，并对其头信息进行解析，以允许Host controller 将包含的数据传输到host memory中的正确位置。RTT(Ready To Transfer) UPIU由主机控制器/ UTP引擎分析，以提取UFS设备提供的有关UTP引擎预期生成的下一个DATA OUT UPIU的必要信息。</p>
+<hr>
+<h2 id="UTP-Transfer-Request-completion-的处理"><a href="#UTP-Transfer-Request-completion-的处理" class="headerlink" title="UTP Transfer Request completion 的处理"></a>UTP Transfer Request completion 的处理</h2><p>当在 host controller 中接收到UTP传输请求完成(UTP Transfer Request Completion)时，处理的过程如下：</p>
+<ol>
+<li>如果完成是针对Regular Command（UTRD.I = 0）：<ul>
+<li>IA中断计数器递增。</li>
+<li>如果计数器在递增之前为0，则IA定时器开始运行</li>
+</ul>
+</li>
+<li>当满足以下四个条件中的至少一个时，IS.UTRCS(UTP Transfer Request Completion Status)位置1：<ul>
+<li>UTRD.I 位被写‘1’（Interrupt Command）</li>
+<li>计数器在增长之后达到IACTH中的那个值（Interrupt aggregation counter threshold）</li>
+<li>当IA计时器达到在IATOVAL（Interrupt aggregation timeout value）中配置的值。（这种情况可能随时发生，不一定与请求完成相关）。</li>
+<li>完成命令的总体命令状态（OCS）不等于“SUCCESS”。</li>
+</ul>
+</li>
+</ol>
+<p>如果完成中断未被IE.UTRCE位屏蔽（禁用），则由写操作产生中断。host software 处理host controller 为command completion 产生的中断。 在中断服务程序中，host software 检查寄存器IS以确定是否有中断挂起。 如果设置了IS.UTRCS位，表示一个或多个UTP Transfer Requests（TR）已完成，应该采用以下步骤：</p>
+<ol>
+<li>如果IS寄存器中出现错误，则主机软件执行错误恢复操作。</li>
+<li>在IS.UTRCS中断的情况下，主机软件清除中断，然后可以使用两种方法之一来确定哪些UTP TRs已经完成：<ul>
+<li>读取UTRLDBR寄存器，并将当前值与主机软件以前issue的仍然Outstanding的命令列表进行比较, 对于outstanding的任何一个TR，UTRLDBR中位置i（其中i表示issue Transfer Request的UTRL slot）中的值0意味着TR已经完成。 UTRLDBR是一个易失性寄存器; software 只能使用其值来确定已经完成的命令，而不能确定先前已经发出的命令。</li>
+<li>读取UTRLCNR寄存器。对于每一个TR, 其中bit i的值为1表示这个位置的TR已经完成。</li>
+</ul>
+</li>
+<li>对于检测到完成的每个TR i，host software重复以下步骤：<ul>
+<li>根据较高OS层（例如文件系统）的要求处理来处理 request completion.</li>
+<li>通过写’1’来清除UTRLCNR的相应位i。</li>
+<li>标记这个slot i表示可以用于重新使用了（仅限软件）</li>
+</ul>
+</li>
+<li>在处理所有先前检测到的TR之后，软件可以通过向UTRIACR寄存器写入80010000h来重置和重新启动中断聚合机制。</li>
+<li>通过重复步骤2中描述的两种方法之一，软件确定步骤2之后是否已经完成了新的TR。 如果新的TR已经完成，则software重复步骤3中的序列。</li>
+</ol>
+<hr>
+<h2 id="Task-Management-Function"><a href="#Task-Management-Function" class="headerlink" title="Task Management Function"></a>Task Management Function</h2><p>UTMRL(Task Management Request List)用于向附加的设备发送UTP任务管理功能。Host controller 应将Task management function放置在比UTP Transfer Request更高的优先级。当提交任务管理请求时，Host controller需要暂停所有active的UTP传输请求，转而分发task management 到相应的设备。</p>
+<h4 id="创建一个-UTP-Task-Management-Request-的基本步骤"><a href="#创建一个-UTP-Task-Management-Request-的基本步骤" class="headerlink" title="创建一个 UTP Task Management Request 的基本步骤"></a>创建一个 UTP Task Management Request 的基本步骤</h4><p>当主机software需要向host controller发送UTP任务管理功能时，使用UTP任务管理请求列表(UTP task management request list)。与UTP transfer request类似，以下是主机软件构建UTP任务管理请求的步骤。</p>
+<ol>
+<li>通过读取UTMRLDBR找到一个空的transfer request slot。一个空的slot在UTMRLDBR中的相应位清零。</li>
+<li>Host software 在empty slot出创建一个UTMRD.</li>
+<li>如果软件请求命令完成后设置HCS.UTMRCE，I（中断）位置1。</li>
+<li>用‘Fh’设置OCS（Overall Command Status）</li>
+<li>编程 Task Management Request UPIU.</li>
+<li>用‘0’来初始化字段 Task Management Response UPIU. </li>
+<li>对每一个将要发送给host controller执行的task management function，重复step1 到 step 7</li>
+<li>检查UTMRLRSR寄存器并且保证在继续之前能够读取到’1’</li>
+<li>设置UTMRCE(UTP Task Management Request Completion Enable)使能位为‘1’来启动中断。</li>
+<li>设置UTMRLDBR来提醒doorbell register以向host controller表示多个transfer requests已经准备好被发送给相应的设备了。Host software只能在与新命令对应的bit position写‘1’。其他的UTMRLDBR应该写‘0’，表示对现有的值没有改变。</li>
+</ol>
+<h4 id="处理UTP-Task-Management-Completion"><a href="#处理UTP-Task-Management-Completion" class="headerlink" title="处理UTP Task Management Completion"></a>处理UTP Task Management Completion</h4><p>Host software 处理由host controller产生的命令完成的中断。在中断服务程序中，主机软件检查IS以确定是否有中断挂起。 如果UFSHCI有一个待处理的中断：</p>
+<ol>
+<li>主机软件通过读取IS寄存器来确定中断的原因。 如果设置了IS.UTMRCS位，则表示UTP任务管理请求已完成。</li>
+<li>主机软件根据中断原因清除IS寄存器中的相应位。</li>
+<li>Host software 读取UTMRLDBR寄存器，并且将当前值与仍然还没有执行的之前由host software issue的命令列表进行对比。主机软件成功地结束相应位在相应寄存器中被清除的任何未完成的命令。 UTMRLDBR是一个易失性寄存器; 软件只能使用其值来确定已经完成的命令，而不是确定先前已经发出的命令。</li>
+<li>如果IS寄存器中出现错误，则主机软件执行错误恢复操作。</li>
+</ol>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/LightNVM-IO-analysis/">
+      LightNVM 自顶向下的 IO 通路简析
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>这篇 IO 通路简析主要偏向于模块之间的衔接，不涉及模块内的细节，主要回答下面的 4 个问题：</p>
+<ol>
+<li>在何处向请求队列注册 make request function 函数（这里是 pblk_make_rq）</li>
+<li>在何处调用了（1）注册的 make request function 函数</li>
+<li>在何处向请求队列注册了 request function 函数（这里是 pci.c 中的 nvme_queue_rq）</li>
+<li>在何处调用了（3）注册的 request function 函数</li>
+</ol>
+<hr>
+<h2 id="LightNVM-两个模块及入口的说明"><a href="#LightNVM-两个模块及入口的说明" class="headerlink" title="LightNVM 两个模块及入口的说明"></a>LightNVM 两个模块及入口的说明</h2><p>LightNVM 中包含有两个模块——lightnvm subsystem 和 pblk。这两个模块的关系如下图中标红框处：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2538886641.jpg" alt="20181130202320.jpg"><br>!!!<br></center><br>!!!</p>
+<p>其中 lightnvm subsystem 的代码位于 /drivers/lightnvm/core.c 中，其使用如下方式初始化：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">builtin_misc_device(_nvm_misc);</span><br></pre></td></tr></table></figure></p>
+<p>在这个初始化中，定义了如下操作，其中标红的函数用于初始化 target（这里是 pblk 或 rrpc）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">file_operations</span> _<span class="title">ctl_fops</span> = &#123;</span></span><br><span class="line">.open           = nonseekable_open,</span><br><span class="line">.unlocked_ioctl = nvm_ctl_ioctl,</span><br><span class="line">.owner          = THIS_MODULE,</span><br><span class="line">.llseek         = noop_llseek,</span><br></pre></td></tr></table></figure></p>
+<p>模块入口说明——pblk模块入口函数有以下六个：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">.make_rq    = pblk_make_rq,</span><br><span class="line">.capacity   = pblk_capacity,</span><br><span class="line">.init       = pblk_init,</span><br><span class="line">.<span class="built_in">exit</span>       = pblk_exit,</span><br><span class="line">.sysfs_init = pblk_sysfs_init,</span><br><span class="line">.sysfs_exit = pblk_sysfs_exit,</span><br></pre></td></tr></table></figure></p>
+<p>其中后面五个函数都只是在 nvm_create_tgt 函数或者 __nvm_remove_tgt 中被调用。关于 pblk_make_rq 函数的说明见下一节。</p>
+<hr>
+<h2 id="pblk-make-rq-相关说明（向请求队列注册-pblk-make-rq）"><a href="#pblk-make-rq-相关说明（向请求队列注册-pblk-make-rq）" class="headerlink" title="pblk_make_rq 相关说明（向请求队列注册 pblk_make_rq）"></a>pblk_make_rq 相关说明（向请求队列注册 pblk_make_rq）</h2><p>操作系统为每个块设备维护一个 request queue。当一个支持 lightnvm 的 nvme 设备被识别到后，lightnvm 模块将会为 nvme device driver 创建 target，每个 target 由两部分组成——属于一个 target 的内存空间和针对该内存空间的操作（其中定义的操作是同类型 target 共享的）。<br>这里创建 target 是通过调用第一章节中提到的函数 nvm_ctl_ioctl 实现的。在该函数间接调用的 nvm_create_tgt 中有一步操作如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">tqueue = blk_alloc_queue_node(GFP_KERNEL, dev-&gt;q-&gt;node);</span><br><span class="line">blk_queue_make_request(tqueue, tt-&gt;make_rq);</span><br></pre></td></tr></table></figure></p>
+<p>通过这两段代码，将 pblk 模块的入口函数 pblk_make_rq（即 make request function）插入到内核为该 pblk 对应的 nvme device 分区维护的请求队列中。</p>
+<hr>
+<h2 id="当-IO-请求下来时的操作（如何调用-pblk-make-rq）"><a href="#当-IO-请求下来时的操作（如何调用-pblk-make-rq）" class="headerlink" title="当 IO 请求下来时的操作（如何调用 pblk_make_rq）"></a>当 IO 请求下来时的操作（如何调用 pblk_make_rq）</h2><ol>
+<li>当一个请求下来后，首先执行 bio_alloc() 用于分配一个新的 bio，之后初始化 bio 描述符。</li>
+<li>bio 初始化完毕后，内核调用 generic_make_request() 函数，这是通用块层的主要入口点。在该函数中：<ul>
+<li>首先调用 bdev_get_queue() 获取与请求的块设备相关的请求队列 rq</li>
+<li>之后调用 rq-&gt;make_request_fn() 将 bio 请求插入请求队列 rq 中</li>
+</ul>
+</li>
+<li>上一步中的 make_request_fn()（即 pblk_make_rq）在 target 初始化的时候已经插入到该请求队列中，因此调用这一步后就进入 lightnvm 模块中。lightnvm 模块与设备驱动相关的代码位于路径 /drivers/nvme/lightnvm.c 中。</li>
+</ol>
+<hr>
+<h2 id="NVMe-向请求队列中注册-request-function（nvme-queue-rq）"><a href="#NVMe-向请求队列中注册-request-function（nvme-queue-rq）" class="headerlink" title="NVMe 向请求队列中注册 request function（nvme_queue_rq）"></a>NVMe 向请求队列中注册 request function（nvme_queue_rq）</h2><p>nvme 为 namespace 初始化 request queue 的操作：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns() &#123;		<span class="comment">//入口函数</span></span><br><span class="line">    <span class="comment">// 其中包含下面这一步操作，用于初始化一个request queue</span></span><br><span class="line">    ns-&gt;<span class="built_in">queue</span> = blk_mq_init_queue(ctrl-&gt;tagset);</span><br></pre></td></tr></table></figure></p>
+<p> 在该函数（blk_mq_init_queue）中调用了另一个函数如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">blk_mq_init_allocated_queue() &#123;</span><br><span class="line">    <span class="comment">// 向request queue中插入nvme的操作函数</span></span><br><span class="line">    q-&gt;mq_ops = <span class="built_in">set</span>-&gt;ops;</span><br></pre></td></tr></table></figure></p>
+<p>其中 nvme 模块的 pci.c 文件中定义了操作入口：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">blk_mq_ops</span> <span class="title">nvme_mq_ops</span> = &#123;</span></span><br><span class="line">    .queue_rq     = nvme_queue_rq,</span><br><span class="line">    .complete     = nvme_pci_complete_rq,</span><br><span class="line">    .init_hctx    = nvme_init_hctx,</span><br><span class="line">    .init_request = nvme_init_request,</span><br><span class="line">    .map_queues   = nvme_pci_map_queues,</span><br><span class="line">    .timeout      = nvme_timeout,</span><br><span class="line">    .poll         = nvme_poll,</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="当-lightnvm-模块处理完成后（如何调用-nvme-queue-rq）"><a href="#当-lightnvm-模块处理完成后（如何调用-nvme-queue-rq）" class="headerlink" title="当 lightnvm 模块处理完成后（如何调用 nvme_queue_rq）"></a>当 lightnvm 模块处理完成后（如何调用 nvme_queue_rq）</h2><p>当 lightnvm 模块中与设备驱动相关的逻辑执行完后，lightnvm（nvme/host/lightnvm.c）将会调用 blk_execute_rq_nowait() 函数将请求交由通用块层处理。该函数部分代码如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">blk_execute_rq_nowait() &#123;</span><br><span class="line">    <span class="keyword">if</span> (q-&gt;mq_ops) &#123;</span><br><span class="line">        blk_mq_sched_insert_request(rq, at_head, <span class="literal">true</span>, <span class="literal">false</span>, <span class="literal">false</span>);</span><br><span class="line">            <span class="keyword">return</span>;</span><br></pre></td></tr></table></figure></p>
+<p><del>这里有个误导性的地方：不仔细看的话，会以为调用了 <strong>blk_run_queue(q)，而该函数会调用 </strong>blk_run_queue_uncond()</del></p>
+<p>继续上面的话题，blk_mq_sched_insert_request() 函数中有如下调用：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">blk_mq_sched_insert_request() &#123;</span><br><span class="line">    blk_mq_run_hw_queue(hctx, async);</span><br><span class="line">blk_mq_run_hw_queue() &#123;</span><br><span class="line">    __blk_mq_delay_run_hw_queue(hctx, async, <span class="number">0</span>);</span><br><span class="line">__blk_mq_delay_run_hw_queue() &#123;</span><br><span class="line">    __blk_mq_run_hw_queue(hctx);</span><br><span class="line">__blk_mq_run_hw_queue() &#123;</span><br><span class="line">    blk_mq_sched_dispatch_requests(hctx);</span><br><span class="line">blk_mq_sched_dispatch_requests() &#123;</span><br><span class="line">    blk_mq_dispatch_rq_list(q, &amp;rq_list);</span><br><span class="line">blk_mq_dispatch_rq_list() &#123;</span><br><span class="line">    <span class="comment">// 这里调用了nvme模块中的nvme_queue_rq</span></span><br><span class="line">    ret = q-&gt;mq_ops-&gt;queue_rq(hctx, &amp;bd);</span><br></pre></td></tr></table></figure></p>
+<p>题外话：其中这里涉及到的请求队列 q 是属于 nvm_dev 结构体中指向的 request queue，其声明在 /include/linux/lightnvm.h 中。nvm_dev 结构体中的 request queue 指针的赋值操作位于文件 /drivers/nvme/lightnvm.c 中的 nvme_nvm_register() 函数中。如下面代码段所示：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">request_queue</span> *<span class="title">q</span> = <span class="title">ns</span>-&gt;<span class="title">queue</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">nvm_dev</span> *<span class="title">dev</span>;</span></span><br><span class="line">dev-&gt;q = q;</span><br></pre></td></tr></table></figure></p>
+<p>补充：以下是 nvme 模块注册 request_queue 时的操作，可以看到这里的 request_queue 的默认 make request 函数是 blk_mq_make_request() 函数（后面会被 pblk_make_rq 覆盖）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns()                         <span class="comment">// drivers/nvme/host/core.c</span></span><br><span class="line">    ns-&gt;<span class="built_in">queue</span> = blk_mq_init_queue(ctrl-&gt;tagset);</span><br><span class="line">blk_mq_init_queue()                     <span class="comment">// block/blk-mq.c</span></span><br><span class="line">    q = blk_mq_init_allocated_queue(<span class="built_in">set</span>, uninit_q);</span><br><span class="line">blk_mq_init_allocated_queue()           <span class="comment">// block/blk-mq.c</span></span><br><span class="line">    blk_queue_make_request(q, blk_mq_make_request);</span><br><span class="line">blk_queue_make_request()                <span class="comment">// block/blk-settings.c</span></span><br><span class="line">    q-&gt;make_request_fn = mfn;</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="NVMe-驱动激活-LightNVM-的操作"><a href="#NVMe-驱动激活-LightNVM-的操作" class="headerlink" title="NVMe 驱动激活 LightNVM 的操作"></a>NVMe 驱动激活 LightNVM 的操作</h2><h4 id="注册-lightnvm，通过调用-nvme-nvm-register-实现"><a href="#注册-lightnvm，通过调用-nvme-nvm-register-实现" class="headerlink" title="注册 lightnvm，通过调用 nvme_nvm_register() 实现"></a>注册 lightnvm，通过调用 nvme_nvm_register() 实现</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (nvme_nvm_ns_supported(ns, id) &amp;&amp; nvme_nvm_register(ns, disk_name, node)) &#123;</span><br><span class="line">        dev_warn(ctrl-&gt;dev, <span class="string">"%s: LightNVM init failure\n"</span>, __func__);</span><br><span class="line">        <span class="keyword">goto</span> out_free_id;</span><br></pre></td></tr></table></figure>
+<h4 id="注销-lightnvm，通过调用-nvme-nvm-unregister-实现"><a href="#注销-lightnvm，通过调用-nvme-nvm-unregister-实现" class="headerlink" title="注销 lightnvm，通过调用 nvme_nvm_unregister() 实现"></a>注销 lightnvm，通过调用 nvme_nvm_unregister() 实现</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_free_ns()</span><br><span class="line"><span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">    nvme_nvm_unregister(ns);</span><br></pre></td></tr></table></figure>
+<h4 id="注册-lightnvm-sysfs，通过调用-nvme-nvm-register-sysfs"><a href="#注册-lightnvm-sysfs，通过调用-nvme-nvm-register-sysfs" class="headerlink" title="注册 lightnvm_sysfs，通过调用 nvme_nvm_register_sysfs()"></a>注册 lightnvm_sysfs，通过调用 nvme_nvm_register_sysfs()</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (ns-&gt;ndev &amp;&amp; nvme_nvm_register_sysfs(ns))</span><br><span class="line">        pr_warn(<span class="string">"%s: failed to register lightnvm sysfs group for identification\n"</span>, ns-&gt;disk-&gt;disk_name);</span><br></pre></td></tr></table></figure>
+<h4 id="注销-lightnvm-sysfs，通过-nvme-nvm-unregister-sysfs"><a href="#注销-lightnvm-sysfs，通过-nvme-nvm-unregister-sysfs" class="headerlink" title="注销 lightnvm_sysfs，通过 nvme_nvm_unregister_sysfs()"></a>注销 lightnvm_sysfs，通过 nvme_nvm_unregister_sysfs()</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_ns_remove()</span><br><span class="line">    <span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">        nvme_nvm_unregister_sysfs(ns);</span><br></pre></td></tr></table></figure>
+<h4 id="nvme-nvm-ns-supported"><a href="#nvme-nvm-ns-supported" class="headerlink" title="nvme_nvm_ns_supported"></a>nvme_nvm_ns_supported</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (nvme_nvm_ns_supported(ns, id) &amp;&amp; nvme_nvm_register(ns, disk_name, node)) &#123;</span><br><span class="line">        dev_warn(ctrl-&gt;dev, <span class="string">"%s: LightNVM init failure\n"</span>, __func__);</span><br><span class="line">        <span class="keyword">goto</span> out_free_id;</span><br></pre></td></tr></table></figure>
+<h4 id="nvme-nvm-ioctl"><a href="#nvme-nvm-ioctl" class="headerlink" title="nvme_nvm_ioctl"></a>nvme_nvm_ioctl</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_ioctl()</span><br><span class="line">    <span class="meta">#<span class="meta-keyword">ifdef</span> CONFIG_NVM</span></span><br><span class="line">        <span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">            <span class="keyword">return</span> nvme_nvm_ioctl(ns, cmd, arg);</span><br><span class="line">    <span class="meta">#<span class="meta-keyword">endif</span></span></span><br></pre></td></tr></table></figure>
+<hr>
+<h2 id="一图流总结"><a href="#一图流总结" class="headerlink" title="一图流总结"></a>一图流总结</h2><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4293740320.png" alt="20181130202330.png"><br>!!!<br></center><br>!!!<br>Lightnvm 分别通过用 pblk_make_rq() 替换原始的 generic_make_request() 从而接收 block layer 下发的请求和向下调用 nvme_queue_rq() 从而将请求传递给驱动程序的方式，实现将自身插入到原生的 IO 栈中。</p>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/LightNVM-transfer-Open-Channel-UFS-analysis/">
+      LightNVM 移植到 Open Channel UFS 设备的实现分析
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>基于 UFS 的 Open Channel FTL 实现与基于 NVMe 的实现思路类似，可按层划分为三个大步骤，自下而上分别为：</p>
+<ol>
+<li>UFS 设备侧的 FTL 相关功能修改；</li>
+<li>主机侧 UFS 驱动程序的操作命令扩展；</li>
+<li>主机侧软件定义的 FTL 功能实现。</li>
+</ol>
+<p>此外我们还需要一个工具用于获取运行数据和验证，例如获取设备的详细参数，例如 channels,luns,blocks,pages 等固有属性，以及 bad block table 和 mapping table 等运行数据。</p>
+<hr>
+<h2 id="模拟-UFS-设备"><a href="#模拟-UFS-设备" class="headerlink" title="模拟 UFS 设备"></a>模拟 UFS 设备</h2><p>UFS 设备侧的修改包括：移除 Garbage Collection、Wear-leveling、Translation Map、Bad Block Management 等需要上移至 Host 端的功能，保留 ECC 等不适合上移的功能，并添加以下几个必要的操作：</p>
+<ul>
+<li>get device geometry</li>
+<li>get l2p table</li>
+<li>set l2p table</li>
+<li>get bad block table</li>
+<li>set bad block table</li>
+<li>erase block</li>
+</ul>
+<p>但是由于目前没有可用的实体 Open Channel UFS 设备，我们只能够寻求通过在虚拟机上模拟一个类似设备的方式来实现原型。在衡量众多虚拟机程序后，我们将目标锁定在 Qemu。主要原因有两点：</p>
+<ol>
+<li>Lightnvm 的研究团队用于实验的环境中使用了 Qemu，并且该团队在 Qemu 提供的 NVMe 仿真程序的基础上进行了扩展，实现了对 Open Channel SSD 的支持，并且该扩展的项目 Qemu-nvme 已开源；</li>
+<li>常年保持活跃的 Qemu 社区和规整的代码更有利于开发。</li>
+</ol>
+<p>由于 Qemu 目前尚未支持 UFS 设备的模拟，因此我们还需要查阅 JEDEC 提供的 UFS STANDARD。我们的目标是 Open Channel UFS，因此我们只需要实现我们需要的上面 6 个命令，外加 Read,Write 命令，一共 8 个命令的操作即可。</p>
+<hr>
+<h2 id="UFS-驱动扩展"><a href="#UFS-驱动扩展" class="headerlink" title="UFS 驱动扩展"></a>UFS 驱动扩展</h2><p>主机侧 UFS 驱动程序保持原有的大框架不变，在 UFS Application（UAP）这层的 Command Set 中，新添加 6 条命令用以扩展驱动程序，这个部分扩展的命令与设备侧新添加的功能一一对应，即：</p>
+<ul>
+<li>get device geometry</li>
+<li>get l2p table</li>
+<li>set l2p table</li>
+<li>get bad block table</li>
+<li>set bad block table</li>
+<li>erase block</li>
+</ul>
+<p>除了扩展 6 个新的命令，由于设备接收自主机的地址不再是逻辑地址，因此还需要重新定义主机侧与设备之间适用于物理地址的地址接口格式。首先，从主机发出的地址不再是逻辑上的线性地址，取而代之的是由 channel,lun,block,page 等拼成的新的组织形式，因此存在地址可能无效的情况，也可能目标地址位于坏块中，这里我们假定所有处理都由 Host 端的 FTL 处理。</p>
+<hr>
+<h2 id="Lightnvm-子系统移植"><a href="#Lightnvm-子系统移植" class="headerlink" title="Lightnvm 子系统移植"></a>Lightnvm 子系统移植</h2><p>主机侧软件定义的 FTL 实现可参考 Linux-4.12 中已存在的 Lightnvm 子系统。我们可对其做少许修改使之能够与 UFS 驱动程序通信。最后实现的预期效果如下，对 Device 与 Driver 做部分修改，并在 Driver 以上，Block Layer 以下插入一个Lightnvm 子层：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4159062797.jpg" alt="20181130202319.jpg"><br>!!!<br></center><br>!!!</p>
+<ul>
+<li>从Block Layer传下来的请求仍然是逻辑地址；</li>
+<li>在Lightnvm中将该逻辑地址映射成物理地址；</li>
+<li>Driver照常提交包含物理地址的请求；</li>
+<li>Device接收到请求后直接对该请求的地址进行操作。</li>
+</ul>
+<p>这里新扩展的6条命令的作用在于：</p>
+<ul>
+<li>Lightnvm需要知道设备的属性，因此需要get device geometry</li>
+<li>设备初始化时需要对设备中已有的数据构建映射关系，需要get l2p table</li>
+<li>设备卸载时需要保存映射关系，需要set l2p table</li>
+<li>设备中某些块可能是坏块，无法写入数据，需要get bad block table</li>
+<li>设备使用过程中会产生坏块，需要set bad block table</li>
+<li>当Lightnvm做GC时，有些块要擦除，需要erase block</li>
+</ul>
+<p>最后，验证原型需要单独开发一套工具，比如获取设备属性、运行过程中设备状态和各种 table 的数据等，这需要我们向 uapi 中添加相应的函数。</p>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/LightNVM-pblk-source-based-on-linux-4-12-rc2/">
+      LightNVM - pblk 源码解析（基于 linux-4.12-rc2）
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <h2 id="基本结构图"><a href="#基本结构图" class="headerlink" title="基本结构图"></a>基本结构图</h2><p>下图是 pblk 的结构图，其中给出了 read 请求和 write 请求的操作示意图，以及 pblk 核心的几个数据结构——L2P table、write buffer、write context。关于具体操作的细节我们在后面的小节给出：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/2440312904.png" alt="20181130202318.png"><br>!!!<br></center><br>!!!</p>
+<ol>
+<li>Buffer 包含两块内容：write buffer 和 write context。write buffer 存储 4KB 为单位(sector)的 data entries，其中write buffer 的大小为 page 的大小 * PUs 的数量 * 8；write context 存储每个 entry 的 metadata。</li>
+<li>L2P table 是 target 的逻辑地址到物理地址的映射，这是 pblk 中的映射，在请求下发给 nvm manager 后 target 的物理地址会再被映射为 device 的物理地址。</li>
+<li>write thread 是一个单独的线程，在 lightnvm 中，write buffer 有多个“Producers”和 一个“Consumer”，其中的 Consumer 就是这里的 write thread。write thread 在两种情况下会被唤醒：<ul>
+<li>定时器触发；</li>
+<li>write buffer 达到 flush 的条件(主动唤醒);</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="line-的概念"><a href="#line-的概念" class="headerlink" title="line 的概念"></a>line 的概念</h2><p>line：从 target 的每个 lun 中取一个 block，组成一个 line。下图是一个例子，帮助我们直观的认识 line。在这个 target 中有 4 个 luns，每个 lun 中有 6 个 blocks，在这个例子中，一共有 6 个 lines，每个 line 的大小是 4 个 blocks：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/3321758576.png" alt="20181130202319.png"><br>!!!<br></center><br>!!!</p>
+<ul>
+<li>line 0 包含的 blocks 编号为：0，6，12，18</li>
+<li>line 1 包含的 blocks 编号为：1，7，13，19</li>
+<li>………………………………</li>
+</ul>
+<hr>
+<h2 id="discard-请求"><a href="#discard-请求" class="headerlink" title="discard 请求"></a>discard 请求</h2><p>discard 的作用是使请求的数据无效化。discard 是针对 L2P table 的操作，只需要将 L2P table 的逻辑地址对应的物理地址设为 empty 就实现了将目标数据无效化的操作。涉及到 discard 的操作如下：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/1260758134.png" alt="20181130202320.png"><br>!!!<br></center><br>!!!<br>当 discard 请求发送到来时，首先查找 L2P table，找到对应的物理地址；之后查找 write buffer，如果 cache hit，则直接更新 L2P table 将请求的逻辑地址对应的物理地址标记为无效；如果 cache miss，则获取请求页地址所在的 line，将其标记为不可用（确保在该地址被无效化之前不会被访问），之后更新 L2P table。相关 discard 的操作流程见下方的流程图：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/3492987467.png" alt="20181130202321.png"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="read-请求"><a href="#read-请求" class="headerlink" title="read 请求"></a>read 请求</h2><p>read 操作大致可分为三步：</p>
+<ol>
+<li>从 L2P table 查找物理地址；</li>
+<li>cache hit，则从 buffer 中读取；</li>
+<li>cache miss，则从设备读取；</li>
+</ol>
+<p>注意：如果只有部分请求 cache hit，则要将 cache miss 的请求重新构造成新的请求，再从设备读取。在这种情况下，当请求从设备中读取数据后，要将 new  bio 中的数据拷贝到 original bio 中。（所有请求都 cache miss 的情况下，从设备中读取数据后不执行该步骤。）<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/1384739315.png" alt="20181130202322.png"><br>!!!<br></center><br>!!!</p>
+<p>下面的流程图展示了整个 read 操作的过程。对于到达的 read 请求，首先查找 L2P table，获取该请求的物理地址；然后查找 write buffer，当 cache hit 的情况下，将 write buffer 中的数据拷贝到 bio 中。这里牵涉到两种情况：只有部分请求页 cache hit 和 所有请求页都 cache hit。如果是所有请求页都 cache hit，则 end io；如果只有部分请求页 cache hit，那么需要将 cache miss 的请求页重新狗造成一个新的请求，然后下发给设备用于读取数据。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/2653169438.png" alt="20181130202323.png"><br>!!!<br></center><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/3328136321.png" alt="20181130202324.png"><br>!!!<br></center><br>!!!<br>在向设备发送请求时，如果是请求页全部 cache miss 的情况，则直接提交请求；如果是部分 cache miss 的情况，则需要先将 cache miss 的请求页拼接成一个新的请求，然后下发给设备，直到设备读取数据并返回后，需要将上一步构造的新的 bio 中的数据拷贝到原始请求的 bio 中。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2697667031.jpg" alt="20181130202318.jpg"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="write-请求"><a href="#write-请求" class="headerlink" title="write 请求"></a>write 请求</h2><p>write 操作分为两个部分：</p>
+<ol>
+<li>写入 write buffer；</li>
+<li>write thread从 write buffer 写入设备；</li>
+</ol>
+<p>在整个写入的操作中，对buffer的操作可以分为两类角色：多个生产者和一个消费者。所有的写操作都会将数据写入 write buffer（扮演生产者），然后由write thread将数据写入设备中（扮演消费者）。下面是这两个部分的具体操作流程：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/2557055257.png" alt="20181130202325.png"><br>!!!<br></center><br>!!!</p>
+<p>写入 buffer 的主要操作如下：</p>
+<ol>
+<li>判断能否向 buffer 写入请求的 entries；</li>
+<li>向 buffer 中写入 entries；</li>
+<li>更新 L2P table；</li>
+<li>判断是否需要唤醒 write thread；</li>
+</ol>
+<p>下面的流程图展示了向buffer中写数据的操作过程。当write请求到来时，首先要判断有没有write buffer足够空间用来进行本次的写请求，如果空间不够，需要进行io调度，将buffer中的数据写回设备中。如果空间足够，就将数据写入到write buffer中，并更新write context，其中write buffer中的单位是entry，大小是4KB。最后再更新 L2P table。这里在end io之前需要判断是否需要唤醒write thread将buffer中的数据写入到设备。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/1387548915.png" alt="20181130202326.png"><br>!!!<br></center><br>!!!</p>
+<p>从 buffer 写入设备的主要操作：</p>
+<ol>
+<li>计算要写回的 entries 数量；</li>
+<li>将 entries 添加到 bio 构造 write request；</li>
+<li>nvme submit io向设备提交请求；</li>
+</ol>
+<p>下图是write thread进行的操作流程：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/2770234034.png" alt="20181130202327.png"><br>!!!<br></center><br>!!!</p>
+<p>write thread 被唤醒的条件有两个：</p>
+<ol>
+<li>被定时器触发；</li>
+<li>write buffer 中需要写回到设备的数据量达到了阈值；</li>
+</ol>
+<p>当 write thread 被唤醒后，首先计算 write buffer 中需要同步的 entries 的总数，这些是需要写回设备的数据单元。之后将 entries 中的数据添加到 bio，用于向设备发送写请求。这里需要注意，write thread 不需要更新 L2P table，因为这个操作在前半部分的 write to buffer 中已经完成了。</p>
+<hr>
+<h2 id="GC"><a href="#GC" class="headerlink" title="GC"></a>GC</h2><p>GC 能够充分将存储单元利用起来。GC thread 被唤醒的条件有：</p>
+<ol>
+<li>定时器唤醒；</li>
+<li>write thread 主动唤醒 GC thread；<br>!!!<br><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/3960561637.png" alt="20181130202328.png"><br>!!!<br></center><br>!!!</li>
+</ol>
+<p>在GC thread被唤醒后，只遍历每个line，并初始化每个line 的工作队列。如上图所示，gc full list 中保存的是 lines，只有全部 full 的 line 才会加入 gc full list。停止 gc 的条件是 free blocks 数量达到预设的阈值。GC是由line管理的，内核遍历由line中的工作队列组成的工作队列链表，对每一个line，分别执行GC 操作。在这个版本的lightnvm中，GC的操作是简单的将数据读出来保存到write buffer中。关于擦除块的操作在write thread中。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/649340819.png" alt="20181130202329.png"><br>!!!<br></center><br>!!!</p>
+<hr>
+<h2 id="L2P-table-recovery"><a href="#L2P-table-recovery" class="headerlink" title="L2P table recovery"></a>L2P table recovery</h2><p>L2P table 是 lightnvm 一个非常核心的数据结构，这张表建立起从逻辑地址到存储器物理地址的映射关系，因此该表是保存在设备的 oob 部分的，当设备初始化的时候直接向设备发送读取 l2p 的请求，即可读取 L2P 表。</p>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/LightNVM/">
+      LightNVM 简介
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>LightNVM<a href="https://github.com/OpenChannelSSD/linux" target="_blank" rel="noopener">1</a> 是 CNEXLabs 针对 Open Channel SSD（以下简称 OCSSD）在 Linux 内核中的一种实现，分支托管在 <a href="https://github.com/OpenChannelSSD/linux" target="_blank" rel="noopener">GitHub</a> 上，目前能找到最早的提交记录是 2015-10-29。LightNVM 的程序栈由三层组成，每一层都向用户空间提供了 OCSSD 的抽象（即用户可以直接与这三层进行 IO 交互而不用经过文件系统，后面会细提到）。示意图如下图所示：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/133890102.jpg" alt="20181130202312.jpg"><br>!!!<br></center><br>!!!</p>
+<ul>
+<li>最上层(3)是对 FTL 的具体实现，其中包含了基本的地址转换、GC 等操作实现，向上呈现为一个逻辑块设备；</li>
+<li>中间的 LightNVM 子系统(2)管理整块设备的划分与聚合，向上可以将多个物理设备以一个逻辑设备或一个物理设备划分为多个逻辑设备的形式提供给 FTL；</li>
+<li>最后是与驱动程序的对接(3)，我们称为 LightNVM Lower-Level（驱动相关层），用于实现 LightNVM 的命令到具体设备驱动命令的转换。在当前版本（linux-4.12-rc2）中只实现了与 NVMe 驱动的对接。</li>
+</ul>
+<hr>
+<h2 id="LightNVM-Lower-Level"><a href="#LightNVM-Lower-Level" class="headerlink" title="LightNVM Lower-Level"></a>LightNVM Lower-Level</h2><p>启用了 LightNVM 的 NVMe 设备驱动程序使内核模块能够通过 PPA I/O 接口访问 OCSSD。设备驱动程序将设备作为传统的 Linux 块设备呈现到用户空间，允许应用程序通过 ioctls 与设备进行交互。如果 PPA 接口通过 LBA 公开，那么它也可能会相应地发出 I/O。其中，PPA（Physical Page Address）是一种专为 OCSSD 设计的 I/O 接口，它定义了管理级命令将设备的几何信息（channel, die, plane 等）并且让主机端能对 SSD 进行管理，下图是一个是传统逻辑块地址与其进行的对比：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/174123964.jpg" alt="20181130202313.jpg"><br>!!!<br></center><br>!!!<br>由图中可以看出，逻辑地址是一维的，每个地址对应到存储设备的一个 sector；而 PPA 地址则为每个段赋予了不同的涵义，地址最前端是 Channel 的地址，通常 SSD 设备具有数十个到数百个不等的 Channels，PPA 地址的 Channel 段指定了请求要访问的 Channel 地址；以此类推，后面分别是芯片地址 PU、片内的块地址 Block、分层地址 Plane、块内的页地址 Page 以及 Sector。OCSSD 设备接收到 PPA 格式的地址后，无需进行映射，直接根据这个地址就能定位到唯一的 Page 或 Block。PPA 地址中每个字段的宽度不定，通常是在设备加载时，通过获取设备几何结构信息后再计算的，这样能够增加灵活性。</p>
+<hr>
+<h2 id="LightNVM-Subsystem"><a href="#LightNVM-Subsystem" class="headerlink" title="LightNVM Subsystem"></a>LightNVM Subsystem</h2><p>LightNVM 子系统对应到具体的物理设备，为每个设备创建一个实例。其实例在 PPA I/O 接口支持的块设备的基础上初始化。该实例使内核能够通过内部 nvm_dev 数据结构和 sysfs 等来暴露设备的几何结构信息，几何结构信息就是类似上面 PPA 地址中所涉及的信息，例如设备包含多少 channels、channel 中包含多少 PUs、有多少个 blocks 等。这样，FTL 和用户空间的应用程序可以在使用前就了解到设备的底层结构信息。它还使用 blk-mq<a href="http://blog.xxiong.me/usr/uploads/2018/11/133890102.jpg" target="_blank" rel="noopener">2</a> 设备驱动程序专用的 I/O 接口公开 vector IO 接口，使得应用程序能够通过设备驱动程序有效地下发 vector I/O。</p>
+<hr>
+<h2 id="pblk"><a href="#pblk" class="headerlink" title="pblk"></a>pblk</h2><p>物理块设备（pblk）是 LightNVM 中最重要的一个部分，为上层的 target 抽象实现了完全关联的基于主机的 FTL 功能，为上层暴露出了传统块设备的 I/O 接口。其中，每一个 target 就是物理存储设备的逻辑抽象，彼此间独立，由 LightNVM 子系统划分与管理。target 这样的抽象使内核空间模块或用户空间应用程序能够通过高级 I/O 接口（例如由 pblk 提供的 Block I/O 接口的标准接口访问 OCSSD，或由自定义 target 提供的为应用程序定制的接口来进行访问。主要的职责是以下几点：</p>
+<ul>
+<li>处理控制器和介质媒体的限制（写缓冲等）；</li>
+<li>逻辑地址到物理地址的转换；</li>
+<li>错误处理；</li>
+<li>垃圾回收；</li>
+</ul>
+<p>具体的实现细节已经在论文中体现（<a href="https://www.usenix.org/conference/fast17/technical-sessions/presentation/bjorling" target="_blank" rel="noopener">LightNVM: The Linux Open-Channel SSD Subsystem</a>），<a href="https://openchannelssd.readthedocs.io/en/latest/``" target="_blank" rel="noopener">官方文档</a>也一直在持续更新。</p>
+<p>（完）</p>
+<hr>
+<h2 id="参考文献"><a href="#参考文献" class="headerlink" title="参考文献"></a>参考文献</h2><p><a href="https://github.com/OpenChannelSSD/linux" target="_blank" rel="noopener">1</a> Bjørling M, González J, Bonnet P. LightNVM: The Linux Open-Channel SSD Subsystem[C]//FAST. 2017: 359-374.<br><a href="http://blog.xxiong.me/usr/uploads/2018/11/133890102.jpg" target="_blank" rel="noopener">2</a> Bjørling M, Axboe J, Nellans D, et al. Linux block IO: introducing multi-queue SSD access on multi-core systems[C]//Proceedings of the 6th international systems and storage conference. ACM, 2013: 22.</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/Open-Channel-SSD/">
+      Open-Channel SSD 简介
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <h2 id="SSD-的特点"><a href="#SSD-的特点" class="headerlink" title="SSD 的特点"></a>SSD 的特点</h2><p>SSD 设备的存储单元主要是 <a href="https://link.springer.com/content/pdf/10.1007/978-90-481-9431-5.pdf" target="_blank" rel="noopener">NAND Flash</a><a href="https://link.springer.com/content/pdf/10.1007/978-90-481-9431-5.pdf" target="_blank" rel="noopener">1</a>，按 page 写入，按 block 擦除，一个 block 内有多个 page，并且擦除的次数有限。根据以上的特点，在使用设备时，必然存在这样的情况：在一个 block 中，有部分 page 保存了有效数据，剩下的 page 全被标记为无效，如果要擦除这个 block，就必须首先将其中的有效数据转移到其他 block，然后才能擦除当前 block，这个过程被称为 GC。</p>
+<p>在写入数据时，有些区域保存了热数据，对应的 block 会被频繁擦除，达到一定次数后就无法再写入数据，将被标记为坏块；有的区域保存了冷数据，例如备份的资源文件等，这样就会造成磨损的失衡。极端的例子：一块 SSD 其中一半区域被频繁擦除，导致全部被标记为坏块，寿命归零；而另一半的区域由于不常访问，寿命接近满编。如果能够平摊寿命，那么这个 SSD 就能使用更久，平摊寿命这一过程被称为 WL（磨损均衡）。</p>
+<p>根据 IO 栈的分层设计思想，同时考虑到设备厂商的各种质保承诺，以及兼容现有的 IO 协议和接口，SSD 被设计成如下图所示的结构：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/1109110897.jpg" alt="20181130162926.jpg"><br>!!!<br></center><br>!!!<br>系统驱动与 SSD 控制芯片之间传输的 IO 请求使用的是逻辑地址，需要经过控制芯片中的 FTL（Flash Translation Layer）转换成真实地址，这样就完成了逻辑地址到真实地址的映射。FTL 负责的主要功能有：磨损均衡、地址映射、坏块管理等，可以在一定程度上提高使用寿命，但是也存在负面的影响，例如：</p>
+<ul>
+<li>数据迁移、调度、垃圾回收、磨损均衡等都由固件决定, 一旦定制后难以修改，缺少灵活性；</li>
+<li>固件只能通过对工作负载的分析进行设计，通用的 SSD 通常只能采取折中的设计方案；</li>
+<li>即使大厂可以进行专用 SSD 的定制，工作负载变更将导致定制的 FTL 发挥不出性能；</li>
+<li>GC、WL、over-provisioning 等操作在一定程度上浪费了 SSD 的存储空间和使用寿命；</li>
+<li>由于 FTL 置于“黑匣子”中，无法保证可以预测的请求时延（latency）；</li>
+</ul>
+<hr>
+<h2 id="SSD-的发展趋势"><a href="#SSD-的发展趋势" class="headerlink" title="SSD 的发展趋势"></a>SSD 的发展趋势</h2><p>SSD 由于其优异的存储性能，几乎已成为云平台的标配；在个人市场领域，SSD 也同样被广泛地使用。我们知道 SSD 控制器内部算法核心是 FTL，把主机侧逻辑地址转换为 SSD 内部 NAND 芯片的物理地址。一般的消费级 SSD 控制器内置 FTL，因为功能比较简单和统一，对性能的需求也较低，且消费级市场经过 WinTel 联盟多年的锤炼，各种接口非常统一，用户的需求也很单一，只要支持 Intel 主板、Windows 操作系统就可以了，大大简化了各种外设的硬件设计。</p>
+<p>但是进入了群雄并立的企业级市场，有各种各样的客户和芯片厂家，大家使用多种多样的操作系统和架构，甚至 Google、Facebook、BAT 等大厂都开始定制硬件、修改内核以支持自身的需求。在这种情况下，FTL 放在 SSD 控制器里面已经难以满足需求，企业用户希望能够根据自己的数据特点设计高效的 FTL，例如：</p>
+<ul>
+<li>搜索引擎可以把索引表和 SSD 物理地址对应起来；</li>
+<li>日志数据可以直接流式写入 Flash 通道；</li>
+<li>数据库希望 key-value 能对应到 SSD 物理地址；</li>
+</ul>
+<hr>
+<h2 id="Open-Channel-SSD"><a href="#Open-Channel-SSD" class="headerlink" title="Open Channel SSD"></a>Open Channel SSD</h2><p><a href="https://events.static.linuxfound.org/sites/events/files/slides/LightNVM-Vault2015.pdf" target="_blank" rel="noopener">Open Channel SSD</a> 是面向企业级市场的其中一个发展方向。在 FAST’2015 闪存峰会上，CNEXLabs 介绍了他们的 Open Channel SSD<a href="http://blog.xxiong.me/usr/uploads/2018/11/1109110897.jpg" target="_blank" rel="noopener">2</a> 概念，通过将 FTL 的功能移动到主机侧的方式，实现一定程度的 FTL 定制，给企业级 SSD 应用提供了新的解决方案。基本架构如下图所示：</p>
+<p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/11/3099188414.jpg" alt="20181130193321.jpg"><br>!!!<br></center><br>!!!</p>
+<p>该方案把 SSD 内部的存储通道开放给主机系统，这样控制器只负责 Flash 数据传输、ECC、错误处理、坏块管理等工作，而 FTL 层的设计由用户自己根据需求实现。这样也更加方便以更高效的方式控制 SSD 阵列，实现了在软件中定义存储。通过 CNEXLabs 公布的实验数据得知，主机侧增加的任务，造成的 latency 只增加了很少的一部分。上图中的 LightNVM<a href="https://events.static.linuxfound.org/sites/events/files/slides/LightNVM-Vault2015.pdf" target="_blank" rel="noopener">3</a> 架构是 CNEXLabs 提供的对 Open-Channel 的一种实现。通过把 SSD 中的 FTL 层集成到主机系统中，对工作负载的优化工作就可以在驱动层、块层、文件系统或应用程序本身中进行。</p>
+<hr>
+<h2 id="Open-Channel-SSD-的优势"><a href="#Open-Channel-SSD-的优势" class="headerlink" title="Open Channel SSD 的优势"></a>Open Channel SSD 的优势</h2><p>根据 CNEXLabs 官方的数据，目前 OCSSD 已经被 WEB 量级的数据中心、超融合基础设施（Hyper-converged Infrastructure）、Flash Array Vendors、高性能计算中心、Tier1 云服务提供商等采用。例如百度使用 OCSSD 来简化一个键值存储的存储堆栈；Fusion-IO 和 Violin 内存均实现主机端存储堆栈来管理 NAND 介质并提供 Block I/O 接口。如下列举一些 OCSSD 的优势：</p>
+<ul>
+<li><p>可预测性</p>
+<ul>
+<li>达到一致且可预测的 IO，低时延的 QoS；</li>
+<li>减少了写放大问题；</li>
+<li>能够实现 IO 隔离，减少了邻间干扰的问题；</li>
+</ul>
+</li>
+<li><p>方便管理</p>
+<ul>
+<li>能够全局地管理所有的 Flash 存储介质；</li>
+<li>PB 级存储的实现；</li>
+<li>单层的地址空间；</li>
+<li>根据应用工作负载的特点来配置所期望的 FTL 功能从而更好地优化 IO；</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>OCSSD 与传统的消费级 SSD 在 IO 通路上的区别就在于：</p>
+<ol>
+<li>对于传统 SSD 而言，请求从文件系统经过调度最终被驱动程序发出来时，请求中指向的地址是逻辑地址，在 SSD 内部的控制芯片中，被转换成了物理地址，负责这个工作的程序被称为 FTL。<br>!!!<br><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4056922680.jpg" alt="20181130202317.jpg"><br>!!!<br></center><br>!!!</li>
+<li>对于 OCSSD，请求从文件系统发下来后，首先被转换成了物理地址（或者文件系统发出来就直接就是物理地址），然后再由驱动程序发给 OCSSD 控制器，控制器接收到的请求中的地址是物理地址。因此也被称为 FTL 上移到系统端。</li>
+</ol>
+<p>（完）</p>
+<hr>
+<h2 id="参考文献"><a href="#参考文献" class="headerlink" title="参考文献"></a>参考文献</h2><p><a href="https://link.springer.com/content/pdf/10.1007/978-90-481-9431-5.pdf" target="_blank" rel="noopener">1</a> Micheloni R, Crippa L, Marelli A. Inside NAND Flash Memories[J]. 2010.<br><a href="http://blog.xxiong.me/usr/uploads/2018/11/1109110897.jpg" target="_blank" rel="noopener">2</a> Bjørling M. Open-Channel Solid State Drives[J]. Vault, Mar, 2015, 12: 22.<br><a href="https://events.static.linuxfound.org/sites/events/files/slides/LightNVM-Vault2015.pdf" target="_blank" rel="noopener">3</a> Bjørling M, González J, Bonnet P. LightNVM: The Linux Open-Channel SSD Subsystem[C]//FAST. 2017: 359-374.</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
+    <a href="/2018/12/05/LightNVM-test-environment-build/">
+      LightNVM 测试环境搭建
+    </a>
+  </h2>
+  
+  <time>
+    Dec 5, 2018
+  </time>
+  <section class="content">
+	  <p>要使用 Open-Channel SSD，需要得到操作系统内核支持。 随着 LightNVM 的加入，4.4 版本后的 linux 内核都可以支持。该项目仍然处于开发中，最新的源代码可从 <a href="https://github.com/OpenChannelSSD/linux" target="_blank" rel="noopener">https://github.com/OpenChannelSSD/linux</a> 获得。启用了相应的内核支持后，必须满足以下条件：</p>
+<ul>
+<li>兼容的设备，如 QEMU NVMe 或 Open-Channel SSD，如 CNEXLabs LightNVM SDK；</li>
+<li>设备驱动程序顶部的媒体管理器。 媒体管理器管理设备的分区表；</li>
+<li>在 Block Manager 上层暴露出 Open-Channel SSD 的目标（target）；</li>
+</ul>
+<hr>
+<h2 id="实验环境"><a href="#实验环境" class="headerlink" title="实验环境"></a>实验环境</h2><p>目前由于 CNEXLabs 的 Open-Channel SSD 还没有购置。因此利用 Qemu 虚拟机模拟 Open-Channel SSD 设备。注意 Qemu 必须能够支持 Open-Channel，可以使用 CNEXLabs 提供的 <a href="https://github.com/OpenChannelSSD/qemu-nvme" target="_blank" rel="noopener">Qemu-nvme 分支</a>。依照官方文档进行配置和编译后，才可以通过后端文件暴露出一个 LightNVM 兼容的设备。当完成安装，内核也被顺利启动后，设备就能够被观察到，并且可以通过 nvme-cli 的工具进行管理和初始化。实验内核：linux-4.12-rc2。</p>
+<hr>
+<h2 id="实验设计"><a href="#实验设计" class="headerlink" title="实验设计"></a>实验设计</h2><h4 id="lightnvm-hello-world"><a href="#lightnvm-hello-world" class="headerlink" title="lightnvm hello world"></a>lightnvm hello world</h4><p>环境配置成功后，可以首先重复一下论文中的一些实验进行验证，观察和分析 OCSSD 的特点，熟悉 lightnvm 的使用。</p>
+<h4 id="多租户应用实验"><a href="#多租户应用实验" class="headerlink" title="多租户应用实验"></a>多租户应用实验</h4><p>利用 OCSSD 来实现多租户的应用，每一个 target 对应一个租户，以同样的 workload，与传统的 SSD 的数据进行对比，分析结果。改变 workload 后再同样进行分析，发现 lightnvm 的特点和不足。</p>
+<h4 id="算法改进"><a href="#算法改进" class="headerlink" title="算法改进"></a>算法改进</h4><p>由于 lightnvm 把 FTL 的功能等都提高到上层，数据迁移，GC 等算法都能够看到如何被实现，也意味着可以进行优化，并且编译自己改进的内核，从而有针对性地提高性能。</p>
+<hr>
+<h2 id="配置环境参考"><a href="#配置环境参考" class="headerlink" title="配置环境参考"></a>配置环境参考</h2><p>下面介绍目前我们能成功跑通 LightNVM 例程的环境搭建流程，主机端安装的是 Ubuntu 17.04 发行版，内核版本为 4.10，提供编译内核的环境，还存在一些不便和不足，后期继续优化：</p>
+<h4 id="内核版本-linux-4-12-rc2-的编译"><a href="#内核版本-linux-4-12-rc2-的编译" class="headerlink" title="内核版本 linux-4.12-rc2 的编译"></a>内核版本 linux-4.12-rc2 的编译</h4><ul>
+<li><p>从 GitHub 下载 <a href="http://github.com/OpenChannelSSD/linux" target="_blank" rel="noopener">master 分支</a>；</p>
+</li>
+<li><p>编译内核，需要注意配置文件中，应该确定以下被配置：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">CONFIG_NVM=y </span><br><span class="line">CONFIG_NVM_DEBUG=y </span><br><span class="line">CONFIG_NVM_PBLK=y </span><br><span class="line">CONFIG_BLK_DEV_NVME=y</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在 arch/x86/boot/ 目录下，会生成编译好后的 bzImage 文件，大小 7M 左右；</p>
+</li>
+</ul>
+<h4 id="Qemu的编译"><a href="#Qemu的编译" class="headerlink" title="Qemu的编译"></a>Qemu的编译</h4><ul>
+<li><p>从 GitHub 下载 <a href="https://github.com/OpenChannelSSD/qemu-nvme.git" target="_blank" rel="noopener">Qemu 主分支</a>；</p>
+</li>
+<li><p>运行如下的配置命令（官方文档中也有详细的介绍）：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">./configure --<span class="built_in">enable</span>-linux-aio --target-list=x86_64-softmmu --<span class="built_in">enable</span>-kvm</span><br><span class="line">modprobe kvm-intel <span class="comment"># 安装 kvm 模块</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>编译的过程中可能需要安装一些库</p>
+</li>
+</ul>
+<h4 id="Qemu-运行虚拟机"><a href="#Qemu-运行虚拟机" class="headerlink" title="Qemu 运行虚拟机"></a>Qemu 运行虚拟机</h4><ul>
+<li><p>创建一个空的文件来模拟 nvme 的设备：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">dd <span class="keyword">if</span>=/dev/zero of=blknvme bs=1M count=1024</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>用以下命令启动一个预装的 linux 镜像作为 Qemu 的运行环境：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">qemu-system-x86_64 -m 4G -smp 1 --<span class="built_in">enable</span>-kvm -hda <span class="variable">$LINUXVMFILE</span> -append \</span><br><span class="line">    <span class="string">"root=/dev/sda1"</span> -kernel <span class="string">"/home/foobar/git/linux/arch/x86_64/boot/bzImage"</span> \</span><br><span class="line">    -drive file=blknvme, <span class="keyword">if</span>=none, id=mynvme -device nvme, drive=mynvme, \</span><br><span class="line">    serial=deadbeef, namespaces=1, lver=1, nlbaf=5, lba_index=3, mdts=10</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>其中，用预装好的镜像 .img 文件替换 $LINUXVMFILE，我们采用的是 Ubuntu 16.04 的系统。可以在 Qemu 里安装，也可以在 virtual-box 等虚拟机中装好，再通过下面的命令加载：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">qemu-img convert -f vmdk -O raw ubuntu.vmdk image.img</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<h4 id="Hello-world"><a href="#Hello-world" class="headerlink" title="Hello world"></a>Hello world</h4><ul>
+<li><p>安装 nvme-cli 工具，通过 apt install 或者从 <a href="https://github.com/linux-nvme/nvme-cli" target="_blank" rel="noopener">GitHub</a> 下载；</p>
+</li>
+<li><p>一切就绪后，就可以通过 sudo nvme lnvm list 命令来列出设备；</p>
+</li>
+</ul>
+<p>（完）</p>
+
+
+    
+    
+    
+
+  </section>
+</article>
+  
+    <article class="post ">
+
+  
+  <h2 class="title">
     <a href="/2018/12/05/LightNVM-Open-Channel-SSD-connection-IO-stack-position/">
       LightNVM 与 Open Channel SSD 的关系以及在 IO 栈上的位置
     </a>

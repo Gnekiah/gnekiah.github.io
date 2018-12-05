@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  
+  <title>Linux 实验内容设计：向内核中插入虚拟块设备 | Gnekiah&#39;s Serenice</title>
+  <meta name="description" content="Just write something casually.">
+  <meta name="keywords" content="">
+  <meta name="HandheldFriendly" content="True">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="大三【Linux 操作系统】课的实验内容设计二：向内核中插入虚拟块设备。 事情是这样的，课题教学组有位老师抱怨实验无趣，4 个实验课内容从古沿用至今，每学期的助教都是直接拿往届的实验内容去上，都尽量能少一事就少一事，然后再加上已经上了的实验一，是一如既往的“编译内核与添加系统调用”，被班里的大神们抱怨没啥意思。作为萌新的我只能龟缩在角落玩扫雷，并不断的观察着黑下脸的任课老师。大概这位老师觉得被学生">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Linux 实验内容设计：向内核中插入虚拟块设备">
+<meta property="og:url" content="http://spiral.xxiong.me/2018/12/05/Linux-test-linux-module-build/index.html">
+<meta property="og:site_name" content="Gnekiah&#39;s Serenice">
+<meta property="og:description" content="大三【Linux 操作系统】课的实验内容设计二：向内核中插入虚拟块设备。 事情是这样的，课题教学组有位老师抱怨实验无趣，4 个实验课内容从古沿用至今，每学期的助教都是直接拿往届的实验内容去上，都尽量能少一事就少一事，然后再加上已经上了的实验一，是一如既往的“编译内核与添加系统调用”，被班里的大神们抱怨没啥意思。作为萌新的我只能龟缩在角落玩扫雷，并不断的观察着黑下脸的任课老师。大概这位老师觉得被学生">
+<meta property="og:locale" content="default">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/2374434949.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/1156424870.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/1733982065.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/1820028190.jpg">
+<meta property="og:updated_time" content="2018-12-05T03:19:19.039Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Linux 实验内容设计：向内核中插入虚拟块设备">
+<meta name="twitter:description" content="大三【Linux 操作系统】课的实验内容设计二：向内核中插入虚拟块设备。 事情是这样的，课题教学组有位老师抱怨实验无趣，4 个实验课内容从古沿用至今，每学期的助教都是直接拿往届的实验内容去上，都尽量能少一事就少一事，然后再加上已经上了的实验一，是一如既往的“编译内核与添加系统调用”，被班里的大神们抱怨没啥意思。作为萌新的我只能龟缩在角落玩扫雷，并不断的观察着黑下脸的任课老师。大概这位老师觉得被学生">
+<meta name="twitter:image" content="http://blog.xxiong.me/usr/uploads/2018/12/2374434949.jpg">
+  
+  
+    <link rel="icon" href="http://www.xxiong.me/favicon.png">
+  
+
+	<script src="https://use.typekit.net/eyf3hir.js"></script>
+  <script>try{Typekit.load({ async: false });}catch(e){}</script>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    function setLoadingBarProgress(num) {
+      document.getElementById('loading-bar').style.width=num+"%";
+    }
+  </script>
+  
+
+</head>
+</html>
+<body>
+  
+  <div id="loading-bar-wrapper">
+  <div id="loading-bar"></div>
+</div>
+
+  <script>setLoadingBarProgress(20)</script>
+  
+  <div id="site-wrapper">
+    
+    <header id="header">
+	<div id="header-wrapper" class="clearfix">
+		<a id="logo" href="/">
+			<img src="/images/logo.png">
+			<span id="site-desc">
+			  很随便的，写点儿东西。
+      </span>
+		</a>
+		<button id="site-nav-switch">
+	    <span class="icon icon-menu"></span>
+	  </button>
+	</div>
+	<aside id="site-menu">
+  	<nav>
+  		
+        <a href="/" class="nav-index nav">
+          首页
+        </a>
+      
+        <a href="/archives" class="nav-archives nav">
+          目录
+        </a>
+      
+        <a href="http://blog.xxiong.me/" class="nav-blog nav">
+          博客
+        </a>
+      
+        <a href="http://blog.xxiong.me/about.html" class="nav-about nav">
+          关于
+        </a>
+      
+        <a href="http://www.xxiong.me" class="nav-home nav">
+          主页
+        </a>
+      
+    </nav>
+	</aside>
+</header>
+    <script>setLoadingBarProgress(40);</script>
+    
+    <main id="main" role="main">
+      <article id="post-Linux-test-linux-module-build" class="post article white-box article-type-post" itemscope="" itemprop="blogPost">
+	<h2 class="title">
+  	<a href="/2018/12/05/Linux-test-linux-module-build/">
+    	Linux 实验内容设计：向内核中插入虚拟块设备
+    </a>
+  </h2>
+	<time>
+	  Dec 5, 2018
+	</time>
+	<section class="content">
+  	<div class="article-entry" itemprop="articleBody">
+    	<p>大三【Linux 操作系统】课的实验内容设计二：向内核中插入虚拟块设备。</p>
+<p>事情是这样的，课题教学组有位老师抱怨实验无趣，4 个实验课内容从古沿用至今，每学期的助教都是直接拿往届的实验内容去上，都尽量能少一事就少一事，然后再加上已经上了的实验一，是一如既往的“编译内核与添加系统调用”，被班里的大神们抱怨没啥意思。作为萌新的我只能龟缩在角落玩扫雷，并不断的观察着黑下脸的任课老师。大概这位老师觉得被学生看扁了很不爽吧，次日五个教学班的助教都被召集，要求在一周内设计出有意思的实验内容，并要求附上实验操作手册。<del>于是就有了这篇麻烦。</del>权当做个记录。</p>
+<hr>
+<h2 id="实验目的"><a href="#实验目的" class="headerlink" title="实验目的"></a>实验目的</h2><ul>
+<li>了解 Linux 模块化编程的方式和原理。</li>
+<li>了解并掌握如何向 Linux 内核中注册一个功能模块。</li>
+<li>了解 sysfs 文件系统的原理和作用。</li>
+<li>学习并掌握如何通过内核提供的 API 向 sysfs 中注册自定义节点。</li>
+<li>了解 Makefile 的编写规则。</li>
+<li>了解并掌握模块化编译的原理和步骤。</li>
+<li>学习 insmod 和 rmmod 插入/卸载模块的原理的操作过程。</li>
+<li>了解 Linux 设备驱动模型。</li>
+<li>理解设备驱动模型中总线、设备、驱动三者的关系。</li>
+<li>了解设备的注册机制和原理。</li>
+<li>掌握块设备的注册原理和操作过程。</li>
+<li>学习并掌握如何通过内核提供的API向内核中注册块设备。</li>
+<li>掌握dmesg的使用。</li>
+</ul>
+<hr>
+<h2 id="Linux-内核模块机制"><a href="#Linux-内核模块机制" class="headerlink" title="Linux 内核模块机制"></a>Linux 内核模块机制</h2><h4 id="模块结构体——module"><a href="#模块结构体——module" class="headerlink" title="模块结构体——module"></a>模块结构体——module</h4><p>module 结构体的主要成员如下代码段所示，module_state 指示模块的状态；模块通过 list_head 将自身插入到内核模块链表中；name 是模块的名称，内核通过这个 name 来识别模块；version 和 srcversion 是模块版本号；之后是模块的入口函数和注销函数——init 和 exit。在实际使用 Linux 内核模块编程时，都必须要实现 init 和 exit 函数。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">module</span> &#123;</span></span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">enum</span> module_state state;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span> <span class="title">list</span>;</span>	</span><br><span class="line">    <span class="keyword">char</span> name[MODULE_NAME_LEN];</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span> *version;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span> *srcversion;</span><br><span class="line">    <span class="keyword">int</span> (*init)(<span class="keyword">void</span>);</span><br><span class="line">    <span class="keyword">void</span> (*<span class="built_in">exit</span>)(<span class="keyword">void</span>);</span><br><span class="line">    ......</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">enum</span> module_state &#123;</span><br><span class="line">    MODULE_STATE_LIVE,      <span class="comment">/* Normal state. */</span></span><br><span class="line">    MODULE_STATE_CONMING,   <span class="comment">/* Full formed, running module_init. */</span></span><br><span class="line">    MODULE_STATE_GOING,     <span class="comment">/* Going away. */</span></span><br><span class="line">    MODULE_STATE_UNFORMED,  <span class="comment">/* Still setting it up. */</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<h4 id="查看模块信息"><a href="#查看模块信息" class="headerlink" title="查看模块信息"></a>查看模块信息</h4><p>使用 readelf 命令可以查看模块文件的信息。例如下代码段所示：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)readelf -h darkelf.ko</span><br><span class="line">ELF Header:</span><br><span class="line">  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00</span><br><span class="line">  Class:                             	ELF64</span><br><span class="line">  Data:                              	2<span class="string">'s complement, little endian</span></span><br><span class="line"><span class="string">  Version:                           	1 (current)</span></span><br><span class="line"><span class="string">  OS/ABI:                            	UNIX - System V</span></span><br><span class="line"><span class="string">  ABI Version:                       	0</span></span><br><span class="line"><span class="string">  Type:                              	REL (Relocatable file)</span></span><br><span class="line"><span class="string">  Machine:                           	Advanced Micro Devices X86-64</span></span><br><span class="line"><span class="string">  Version:                           	0x1</span></span><br><span class="line"><span class="string">  Entry point address:               	0x0</span></span><br><span class="line"><span class="string">  Start of program headers:          	0 (bytes into file)</span></span><br><span class="line"><span class="string">  Start of section headers:          	332976 (bytes into file)</span></span><br><span class="line"><span class="string">  Flags:                             	0x0</span></span><br><span class="line"><span class="string">  Size of this header:               	64 (bytes)</span></span><br><span class="line"><span class="string">  Size of program headers:           	0 (bytes)</span></span><br><span class="line"><span class="string">  Number of program headers:        	0</span></span><br><span class="line"><span class="string">  Size of section headers:			64 (bytes)</span></span><br><span class="line"><span class="string">  Number of section headers:   		39</span></span><br><span class="line"><span class="string">  Section header string table index:	38</span></span><br></pre></td></tr></table></figure></p>
+<h4 id="模块加载"><a href="#模块加载" class="headerlink" title="模块加载"></a>模块加载</h4><p>模块加载是通过系统调用 init_module 来实现的，该系统调用源码位置位于源码文件 linux/kernel/module.c 中。这个系统调用是通过 SYSCALL_DEFINE3 (init_module…) 实现，其中有两个关键的函数调用。load_module 用于模块加载，do_init_module 用于回调模块的 init 函数。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_DEFINE3(init_module, <span class="keyword">void</span> __user *, umod,</span><br><span class="line">        <span class="keyword">unsigned</span> <span class="keyword">long</span>, len, <span class="keyword">const</span> <span class="keyword">char</span> __user *, uargs)</span><br><span class="line">&#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> load_module(&amp;info, uargs, <span class="number">0</span>);</span><br><span class="line">&#125;</span><br><span class="line">	</span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">load_module</span><span class="params">(struct load_info *info, </span></span></span><br><span class="line"><span class="function"><span class="params">        <span class="keyword">const</span> <span class="keyword">char</span> __user *uargs, <span class="keyword">int</span> flag)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ......</span><br><span class="line">    err = module_sig_check(info, flags);</span><br><span class="line">    err = elf_header_check(info);</span><br><span class="line">    mod = layout_and_allocate(info, flags);</span><br><span class="line">    ......</span><br><span class="line">    err = find_module_sections(mod, info);</span><br><span class="line">    err = check_module_license_and_version(mod);</span><br><span class="line">    setup_modinfo(mod, info);</span><br><span class="line">    ......</span><br><span class="line">    err = complete_formation(mod, info);</span><br><span class="line">    ......</span><br><span class="line">    err = mod_sysfs_setup(mod, info, mod-&gt;kp, mod-&gt;num_kp);</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> do_init_module(mod);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>do_init_module 的核心操作就是回调 init：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> noinline <span class="keyword">int</span> <span class="title">do_init_module</span><span class="params">(struct <span class="keyword">module</span> *mod)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">if</span> (mod-&gt;init != <span class="literal">NULL</span>)</span><br><span class="line">        ret = do_one_initcall(mod-&gt;init);</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">int</span> __<span class="function">init_or_module <span class="title">do_one_initcall</span><span class="params">(<span class="keyword">initcall_t</span> fn)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">if</span> (initcall_debug)</span><br><span class="line">        ret = do_one_initcall_debug(fn);</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        ret = fn();</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="模块卸载"><a href="#模块卸载" class="headerlink" title="模块卸载"></a>模块卸载</h4><p>模块卸载的操作由 delete_module 来完成，位于 linux3.5.2/kernel/module.c 中。通过回调 exit 完成模块的出口函数功能，最后调用 free_module 将模块卸载。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">SYSCALL_DEFINE2(delete_module, <span class="keyword">const</span> <span class="keyword">char</span> __user *,</span><br><span class="line">        name_user, <span class="keyword">unsigned</span> <span class="keyword">int</span>, flags)</span><br><span class="line">&#123;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">module</span> *<span class="title">mod</span>;</span></span><br><span class="line">    <span class="keyword">char</span> name[MODULE_NAME_LEN];</span><br><span class="line">    <span class="keyword">int</span> ret, forced = <span class="number">0</span>;</span><br><span class="line">    ......</span><br><span class="line">    <span class="keyword">if</span> (mod-&gt;<span class="built_in">exit</span> != <span class="literal">NULL</span>)</span><br><span class="line">        mod-&gt;<span class="built_in">exit</span>();</span><br><span class="line">    ......</span><br><span class="line">    free_module(mod);</span><br><span class="line">    ......</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>内核模块其实并不神秘。传统的用户程序需要编译为可执行程序才能执行，而模块程序只需要编译为目标文件的形式便可以加载到内核，有内核实现模块的链接，将之转化为可执行代码。同时，在内核加载和卸载的过程中，会通过函数回调用户定义的模块入口函数和模块出口函数，实现相应的功能。</p>
+<hr>
+<h2 id="Linux-内核块设备介绍"><a href="#Linux-内核块设备介绍" class="headerlink" title="Linux 内核块设备介绍"></a>Linux 内核块设备介绍</h2><h4 id="块设备概念"><a href="#块设备概念" class="headerlink" title="块设备概念"></a>块设备概念</h4><p>一种具有一定结构的随机存取设备，对这种设备的读写是按块进行的，他使用缓冲区来存放暂时的数据，待条件成熟后，从缓存一次性写入设备或者从设备一次性读到缓冲区。可以随机访问，块设备的访问位置必须能够在介质的不同区间前后移动。</p>
+<h4 id="块设备相关属性"><a href="#块设备相关属性" class="headerlink" title="块设备相关属性"></a>块设备相关属性</h4><ul>
+<li>扇区(Sectors)：任何块设备硬件对数据处理的基本单位。通常，1 个扇区的大小为 512byte。（对设备而言）</li>
+<li>块  (Blocks)：由 Linux 制定对内核或文件系统等数据处理的基本单位。通常，1 个块由 1 个或多个扇区组成。（对 Linux 操作系统而言）</li>
+<li>段(Segments)：由若干个相邻的块组成。是 Linux 内存管理机制中一个内存页或者内存页的一部分。<br>!!!<br><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2374434949.jpg" alt="20181130202335.jpg"><br>!!!<br></center><br>!!!</li>
+</ul>
+<h4 id="块设备被访问的分层实现"><a href="#块设备被访问的分层实现" class="headerlink" title="块设备被访问的分层实现"></a>块设备被访问的分层实现</h4><p>首先块设备驱动是以何种方式对块设备进行访问的。在 Linux 中，驱动对块设备的输入或输出 (I/O) 操作，都会向块设备发出一个请求，在驱动中用 request 结构体描述。但对于一些磁盘设备而言请求的速度很慢，这时候内核就提供一种队列的机制把这些 I/O 请求添加到队列中(即：请求队列)，在驱动中用 request_queue 结构体描述。在向块设备提交这些请求前内核会先执行请求的合并和排序预操作，以提高访问的效率，然后再由内核中的 I/O 调度程序子系统(即：上图中的 I/O 调度层)来负责提交 I/O 请求，I/O 调度程序将磁盘资源分配给系统中所有挂起的块 I/O 请求，其工作是管理块设备的请求队列，决定队列中的请求的排列顺序以及什么时候派发请求到设备，关于更多详细的 I/O 调度知识这里就不深加研究了。</p>
+<p>然后块设备驱动又是怎样维持一个 I/O 请求在上层文件系统与底层物理磁盘之间的关系呢？这就是上图中通用块层 (Generic Block Layer) 要做的事情了。在通用块层中，通常用一个 bio 结构体来对应一个 I/O 请求，它代表了正在活动的以段 (Segment) 链表形式组织的块 IO 操作，对于它所需要的所有段又用 bio_vec 结构体表示。</p>
+<p>块设备驱动又是怎样对底层物理磁盘进行反问的呢？上面讲的都是对上层的访问对上层的关系。Linux 提供了一个 gendisk 数据结构体，用他来表示一个独立的磁盘设备或分区。在 gendisk 中有一个类似字符设备中 file_operations 的硬件操作结构指针，他就是 block_device_operations 结构体。<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1156424870.jpg" alt="20181130202336.jpg"><br>!!!<br></center><br>!!!</p>
+<h4 id="块设备数据结构"><a href="#块设备数据结构" class="headerlink" title="块设备数据结构"></a>块设备数据结构</h4><ul>
+<li>block_device：block_device 结构代表了内核中的一个块设备。它可以表示整个磁盘或一个特定的分区。当这个结构代表一个分区时，它的 bd_contains 成员指向包含这个分区的设备，bd_part 成员指向设备的分区结构。当这个结构代表一个块设备时， bd_disk 成员指向设备的 gendisk 结构。</li>
+<li>gendisk 是一个单独的磁盘驱动器的内核表示。内核还使用 gendisk 来表示分区。</li>
+<li>block_device_operations 结构是块设备对应的操作接口，是连接抽象的块设备操作与具体块设备操作之间的枢纽。</li>
+</ul>
+<p>系统对块设备进行读写操作时，通过块设备通用的读写操作函数将一个请求保存在该设备的操作请求队列（request queue）中，然后调用这个块设备的底层处理函数，对请求队列中的操作请求进行逐一执行。request_queue 结构描述了块设备的请求队列。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">block_device</span> &#123;</span></span><br><span class="line">    <span class="keyword">dev_t</span>           bd_dev;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">inode</span>   *<span class="title">bd_inode</span>;</span> 		<span class="comment">// 分区节点</span></span><br><span class="line">    <span class="keyword">int</span>             bd_openers;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">semaphore</span> <span class="title">bd_sem</span>;</span>        	<span class="comment">// 打开/关闭锁</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">semaphore</span> <span class="title">bd_mount_sem</span>;</span>  	<span class="comment">// 加载互斥锁</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span> <span class="title">bd_inodes</span>;</span></span><br><span class="line">    <span class="keyword">void</span>       	*bd_holder;</span><br><span class="line">    <span class="keyword">int</span>        	bd_holders;</span><br><span class="line">    <span class="keyword">unsigned</span>   	bd_block_size;     	<span class="comment">// 分区块大小</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">block_device</span> 	*<span class="title">bd_contains</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">hd_struct</span>    	*<span class="title">bd_part</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">gendisk</span>      	*<span class="title">bd_disk</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">list_head</span>    	<span class="title">bd_list</span>;</span></span><br><span class="line">    <span class="keyword">unsigned</span> 	bd_part_count; 		<span class="comment">// 打开次数</span></span><br><span class="line">    <span class="keyword">int</span> 		bd_invalidated;</span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">backing_dev_info</span> *<span class="title">bd_inode_backing_dev_info</span>;</span></span><br><span class="line">    <span class="keyword">unsigned</span> <span class="keyword">long</span> bd_private;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>向内核注册和注销一个块设备可使用如下函数：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">register_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">unregister_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<h4 id="块设备驱动开发"><a href="#块设备驱动开发" class="headerlink" title="块设备驱动开发"></a>块设备驱动开发</h4><ol>
+<li>块设备驱动注册与注销<br>块设备驱动中的第 1 个工作通常是注册它们自己到内核，完成这个任务的函数是 register_blkdev()，其原型为：<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">register_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>与 register_blkdev() 对应的注销函数是 unregister_blkdev()，其原型为：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">int</span> <span class="title">unregister_blkdev</span><span class="params">(<span class="keyword">unsigned</span> <span class="keyword">int</span> major, <span class="keyword">const</span> <span class="keyword">char</span> *name)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<p>这里，传递给 register_blkdev() 的参数必须与传递给 register_blkdev() 的参数匹配，否则这个函数返回 -EINVAL。</p>
+<ol start="2">
+<li>块设备的请求队列操作<br>标准的请求处理程序能排序请求，并合并相邻的请求，如果一个块设备希望使用标准的请求处理程序，那它必须调用函数 blk_init_queue 来初始化请求队列。当处理在队列上的请求时，必须持有队列自旋锁。初始化请求队列：<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">req_queue_t</span> *blk_init_queue(request_fn_proc *rfn, <span class="keyword">spinlock_t</span> *lock);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>该函数的第 1 个参数是请求处理函数的指针，第 2 个参数是控制访问队列权限的自旋锁，这个函数会发生内存分配的行为，故它可能会失败，函数调用成功时，它返回指向初始化请求队列的指针，否则，返回 NULL。这个函数一般在块设备驱动的模块加载函数中调用。清除请求队列：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blk_cleanup_queue</span><span class="params">(<span class="keyword">request_queue_t</span> * q)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<p>这个函数完成将请求队列返回给系统的任务，一般在块设备驱动模块卸载函数中调用。</p>
+<ol start="3">
+<li>提取请求<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function">struct request *<span class="title">elv_next_request</span><span class="params">(<span class="keyword">request_queue_t</span> *<span class="built_in">queue</span>)</span></span>;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>上述函数用于返回下一个要处理的请求（由 I/O 调度器决定），如果没有请求则返回 NULL。</p>
+<ol start="4">
+<li>去除请求<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blkdev_dequeue_request</span><span class="params">(struct request *req)</span></span>;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>上述函数从队列中去除1个请求。如果驱动中同时从同一个队列中操作了多个请求，它必须以这样的方式将它们从队列中去除。</p>
+<ol start="5">
+<li>分配“请求队列”<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">request_queue_t</span> *blk_alloc_queue(<span class="keyword">int</span> gfp_mask);</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>对于 FLASH、RAM 盘等完全随机访问的非机械设备，并不需要进行复杂的 I/O 调度，这个时候，应该使用上述函数分配 1 个“请求队列”，并使用如下函数来绑定“请求队列”和“制造请求”函数。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blk_queue_make_request</span><span class="params">(<span class="keyword">request_queue_t</span> * q, make_request_fn * mfn)</span></span>;</span><br><span class="line"><span class="function"><span class="keyword">void</span> <span class="title">blk_queue_hardsect_size</span><span class="params">(<span class="keyword">request_queue_t</span> *<span class="built_in">queue</span>, <span class="keyword">unsigned</span> <span class="keyword">short</span> max)</span></span>;</span><br></pre></td></tr></table></figure></p>
+<p>该函数用于告知内核块设备硬件扇区的大小，所有由内核产生的请求都是这个大小的倍数并且被正确对界。但是，内核块设备层和驱动之间的通信还是以 512 字节扇区为单位进行。</p>
+<ol start="6">
+<li>步骤<br>在块设备驱动的模块加载函数中通常需要完成如下工作：<ul>
+<li>分配、初始化请求队列，绑定请求队列和请求函数。</li>
+<li>分配、初始化 gendisk，给 gendisk 的 major、fops、queue等成员赋值，最后添加 gendisk。</li>
+<li>注册块设备驱动。</li>
+</ul>
+</li>
+</ol>
+<p>在块设备驱动的模块卸载函数中通常需要与模块加载函数相反的工作：</p>
+<ul>
+<li>清除请求队列。</li>
+<li>删除 gendisk 和对 gendisk 的引用。</li>
+<li>删除对块设备的引用，注销块设备驱动。</li>
+</ul>
+<hr>
+<h2 id="注册块设备的基本步骤"><a href="#注册块设备的基本步骤" class="headerlink" title="注册块设备的基本步骤"></a>注册块设备的基本步骤</h2><p>内核提供了块设备的相关接口（位于源码文件 /block）。一般情况下，需要进行如下步骤：</p>
+<ol>
+<li>注册一种块设备类型 register_blkdev，传入的参数是要注册的主设备号和设备名称，如果为 0 的话内核会自动为你分配一个主设备号。</li>
+<li>申请一个块设备结构体的实例 alloc_disk。</li>
+<li>对块设备实例进行初始化赋值。</li>
+<li>将实例插入到内核块设备链表上 add_disk。</li>
+</ol>
+<hr>
+<h2 id="编写模块源码"><a href="#编写模块源码" class="headerlink" title="编写模块源码"></a>编写模块源码</h2><h4 id="模块的注册"><a href="#模块的注册" class="headerlink" title="模块的注册"></a>模块的注册</h4><p>模块的注册和卸载通过 module_init(*fn) 和 module_exit(*fn) 进行，其中 *fn 是函数指针，是用于执行初始化或者卸载模块时的具体操作。一个基本的简单模块如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">module_init(darkelf_init);</span><br><span class="line">module_exit(darkelf_exit);</span><br></pre></td></tr></table></figure></p>
+<p>这里的 darkelf_init 是自己定义的对该模块进行初始化的函数；darkelf_exit 是对本模块进行卸载时用于处理释放内存等操作的函数。此外还可以指定对模块的描述信息：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">MODULE_AUTHOR(<span class="string">"XiongXiong &lt;xx@xxiong.me&gt;"</span>);</span><br><span class="line">MODULE_LICENSE(<span class="string">"GPL"</span>);</span><br><span class="line">MODULE_DESCRIPTION(<span class="string">"You got a dream...you gotta protect it!!"</span>);</span><br></pre></td></tr></table></figure></p>
+<ul>
+<li>MODULE_AUTHOR指定本模块的作者，一般是名字+邮箱的格式；</li>
+<li>MODULE_LICENSE是声明本模块的开源协议；</li>
+<li>MODULE_DESCRIPTION是对模块功能的描述信息。</li>
+</ul>
+<h4 id="模块的基本数据结构"><a href="#模块的基本数据结构" class="headerlink" title="模块的基本数据结构"></a>模块的基本数据结构</h4><p>一个模块一般都有个核心的数据结构，这里我们也自己定义一个结构体，结构体中包含一个 kobject 指针，通过 kobject 可以将模块插入内核维护的 kset 链表中，通过这个结构体，我们可以实现将模块中的函数映射到 sys 文件系统中，从而实现通过在用户空间对文件的读写来间接实现控制模块访问内核地址空间等骚操作：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">darkelf</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">kobject</span> *<span class="title">kobj</span>;</span></span><br><span class="line">&#125; *darkelf;</span><br></pre></td></tr></table></figure></p>
+<h4 id="初始化函数"><a href="#初始化函数" class="headerlink" title="初始化函数"></a>初始化函数</h4><p>初始化函数中一般要执行为变量分配内存空间、将 kobject 插入内核等操作。如下的例子中只完成了为 darkelf 变量分配空间，并将 darkelf 的 kobject 插入 kernel_kobj 的操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">int</span> __<span class="function">init <span class="title">darkelf_init</span><span class="params">(<span class="keyword">void</span>)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">int</span> ret = <span class="number">0</span>;</span><br><span class="line">    darkelf = kzalloc(<span class="keyword">sizeof</span>(struct darkelf), GFP_KERNEL);</span><br><span class="line">    <span class="keyword">if</span> (!darkelf) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> out;</span><br><span class="line">    &#125;</span><br><span class="line">    darkelf-&gt;kobj = kobject_create_and_add(<span class="string">"darkelf"</span>, kernel_kobj);</span><br><span class="line">    <span class="keyword">if</span> (!(darkelf-&gt;kobj)) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> free_darkelf;</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">free_darkelf:</span><br><span class="line">    kfree(darkelf);</span><br><span class="line">out:</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="注销函数"><a href="#注销函数" class="headerlink" title="注销函数"></a>注销函数</h4><p>注销模块一般是删除模块信息、回收内存等操作。<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">void</span> __<span class="function"><span class="built_in">exit</span> <span class="title">darkelf_exit</span><span class="params">(<span class="keyword">void</span>)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    kobject_put(darkelf-&gt;kobj);</span><br><span class="line">    kfree(darkelf);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<h4 id="注册-sysfs-文件节点"><a href="#注册-sysfs-文件节点" class="headerlink" title="注册 sysfs 文件节点"></a>注册 sysfs 文件节点</h4><p>内核通过 sysfs 来实现将模块中的函数映射到一个文件上，从而实现对模块的读写。内核提供了函数 sysfs_create_group() 来实现映射，通过 sysfs_remove_group() 删除映射，具体过程如下。</p>
+<p>首先我们随便定义一个变量b，用来存储用户空间传来的值：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">int</span> b;</span><br></pre></td></tr></table></figure></p>
+<p>然后定义 kobj_attribute，并指定对变量 b 的操作函数：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">kobj_attribute</span> <span class="title">darkelf_gate</span> =</span></span><br><span class="line"><span class="class">       __<span class="title">ATTR</span>(<span class="title">gate</span>, 0664, <span class="title">darkelf_show</span>, <span class="title">darkelf_store</span>);</span></span><br></pre></td></tr></table></figure></p>
+<p>其中 0664 表示将 darkelf_b 映射到 sysfs 形成文件后的访问权限，文件的读写分别映射到函数：darkelf_show 和 darkelf_store上。通过这种方式，在用户空间对该文件执行 echo 或 cat 后，具体的读写都将由这两个函数完成。读写函数可以随便操作，例如下图中，show 执行的操作是将 b 中的值打印出来；store 执行的操作是将用户空间发来的数据转换成 10 进制的 int 类型然后保存到b中：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> ssize_t <span class="title">darkelf_show</span><span class="params">(struct kobject *kobj, </span></span></span><br><span class="line"><span class="function"><span class="params">        struct kobj_attribute *attr, <span class="keyword">char</span> *buf)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> ssize_t <span class="title">darkelf_store</span><span class="params">(struct kobject *kobj, </span></span></span><br><span class="line"><span class="function"><span class="params">        struct kobj_attribute *attr, <span class="keyword">const</span> <span class="keyword">char</span> *buf, <span class="keyword">size_t</span> cnt)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">    <span class="keyword">int</span> ret = <span class="number">0</span>;</span><br><span class="line">    ret = kstrtoint(buf, <span class="number">10</span>, &amp;b);</span><br><span class="line">    <span class="keyword">if</span> (ret &lt; <span class="number">0</span>)</span><br><span class="line">        <span class="keyword">return</span> ret;</span><br><span class="line">    <span class="keyword">return</span> ret;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>再然后定义 attributes 和 attribute_group，如下的例子：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">attribute</span> *<span class="title">darkelf_attrs</span>[] = &#123;</span></span><br><span class="line">    &amp;darkelf_gate.attr,</span><br><span class="line">    <span class="literal">NULL</span>,</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">static</span> <span class="class"><span class="keyword">struct</span> <span class="title">attribute_group</span> <span class="title">darkelf_attr_group</span> = &#123;</span></span><br><span class="line">    .attrs = darkelf_attrs,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>准备工作完成后，只需要在 init 和 exit 中分别将创建和删除的函数插入，就完成初始化过程了。</p>
+<hr>
+<h2 id="编写-Makefile"><a href="#编写-Makefile" class="headerlink" title="编写 Makefile"></a>编写 Makefile</h2><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">obj-m := darkelf.o</span><br><span class="line">CURRENT_PATH := $(shell pwd)</span><br><span class="line">LINUX_KERNEL_PATH := /root/linux<span class="number">-4.4</span><span class="number">.126</span></span><br><span class="line">all:</span><br><span class="line">        $(MAKE) -C $(LINUX_KERNEL_PATH) M=$(CURRENT_PATH) modules</span><br></pre></td></tr></table></figure>
+<p>首先第一行指定将模块编译成独立模块的形式，第三行获取当前的路径，第四行是内核源码的路径。通过这种方式，可以在不用反复编译内核的情况下，将模块编译出来。make 将自动从内核所在路径中加载需要的头文件。通过执行 make all 来完成编译：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)make all</span><br><span class="line">make -C /root/linux-4.4.126 M=/root/darkelf modules</span><br><span class="line">make[1]: Entering directory <span class="string">'/root/linux-4.4.126'</span></span><br><span class="line">  CC [M]  /root/darkelf/darkelf.o</span><br><span class="line">  Building modules, stage 2.</span><br><span class="line">  MODPOST 1 modules</span><br><span class="line">  CC      /root/darkelf/darkelf.mod.o</span><br><span class="line">  LD [M]  /root/darkelf/darkelf.ko</span><br><span class="line">make[1]: Leaving directory <span class="string">'/root/linux-4.4.126'</span></span><br></pre></td></tr></table></figure></p>
+<p>然后当前路径下将出现一个 darkelf.ko，这就是模块文件。<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)ls -lh</span><br><span class="line">total 688K</span><br><span class="line">-rw-r--r-- 1 root root 3.8K Apr 25 15:54 darkelf.c</span><br><span class="line">-rw-r--r-- 1 root root 329K Apr 25 17:08 darkelf.ko</span><br><span class="line">-rw-r--r-- 1 root root  561 Apr 25 17:08 darkelf.mod.c</span><br><span class="line">-rw-r--r-- 1 root root  93K Apr 25 17:08 darkelf.mod.o</span><br><span class="line">-rw-r--r-- 1 root root 241K Apr 25 17:08 darkelf.o</span><br><span class="line">-rw-r--r-- 1 root root  156 Apr  3 19:26 Makefile</span><br><span class="line">-rw-r--r-- 1 root root   32 Apr 25 17:08 modules.order</span><br><span class="line">-rw-r--r-- 1 root root    0 Apr  3 19:31 Module.symvers</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="执行编译并测试模块"><a href="#执行编译并测试模块" class="headerlink" title="执行编译并测试模块"></a>执行编译并测试模块</h2><p>通过 insmod 将模块插入内核中，通过 rmmod 将模块弹出：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)insmod ./darkelf.ko</span><br><span class="line">root@AE86_&lt;darkelf&gt;(lab1)rmmod darkelf</span><br></pre></td></tr></table></figure></p>
+<p>进入 /sys/kernel 中，会发现有一个名为 darkelf 的目录，该目录下有一个文件 b：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;ll</span><br><span class="line">total 0</span><br><span class="line">-rw-r--r-- 1 root root 4K Apr 25 17:17 b</span><br><span class="line">root@AE86_&lt;darkelf&gt;<span class="built_in">pwd</span></span><br><span class="line">/sys/kernel/darkelf</span><br></pre></td></tr></table></figure></p>
+<p>测试对文件的读写：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;cat b</span><br><span class="line">0</span><br><span class="line">root@AE86_&lt;darkelf&gt;<span class="built_in">echo</span> 12345 &gt; b &amp; cat b</span><br><span class="line">12345</span><br></pre></td></tr></table></figure></p>
+<p>查看调试信息：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;dmesg | tail -n 2</span><br><span class="line">[  156.351914] DARKELF: ghost has fall down.</span><br><span class="line">[  159.732729] DARKELF: dark elf has gone away.</span><br></pre></td></tr></table></figure></p>
+<p>查看模块 .ko 的信息：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;darkelf&gt;(lab1)readelf -h darkelf.ko</span><br><span class="line">ELF Header:</span><br><span class="line">  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00</span><br><span class="line">  Class:                             ELF64</span><br><span class="line">  Data:                              2<span class="string">'s complement, little endian</span></span><br><span class="line"><span class="string">  Version:                           1 (current)</span></span><br><span class="line"><span class="string">  OS/ABI:                            UNIX - System V</span></span><br><span class="line"><span class="string">  ABI Version:                       0</span></span><br><span class="line"><span class="string">  Type:                              REL (Relocatable file)</span></span><br><span class="line"><span class="string">  Machine:                           Advanced Micro Devices X86-64</span></span><br><span class="line"><span class="string">  Version:                           0x1</span></span><br><span class="line"><span class="string">  Entry point address:               0x0</span></span><br><span class="line"><span class="string">  Start of program headers:          0 (bytes into file)</span></span><br><span class="line"><span class="string">  Start of section headers:          322160 (bytes into file)</span></span><br><span class="line"><span class="string">  Flags:                             0x0</span></span><br><span class="line"><span class="string">  Size of this header:               64 (bytes)</span></span><br><span class="line"><span class="string">  Size of program headers:           0 (bytes)</span></span><br><span class="line"><span class="string">  Number of program headers:         0</span></span><br><span class="line"><span class="string">  Size of section headers:           64 (bytes)</span></span><br><span class="line"><span class="string">  Number of section headers:         29</span></span><br><span class="line"><span class="string">  Section header string table index: 28</span></span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="编写块设备源码"><a href="#编写块设备源码" class="headerlink" title="编写块设备源码"></a>编写块设备源码</h2><p>定义一个结构体，其中包含一个 gendisk 指针和请求队列指针<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">darkelf</span> &#123;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">kobject</span> *<span class="title">kobj</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">gendisk</span> *<span class="title">disk</span>;</span></span><br><span class="line">    <span class="class"><span class="keyword">struct</span> <span class="title">request_queue</span> *<span class="title">queue</span>;</span></span><br><span class="line">&#125; *darkelf;</span><br></pre></td></tr></table></figure></p>
+<p>初始化一个对当前块设备的操作方法<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">block_device_operations</span> <span class="title">elf_fops</span> = &#123;</span></span><br><span class="line">    .owner    = THIS_MODULE,</span><br><span class="line">    .open     = elf_open,</span><br><span class="line">    .release  = elf_release,</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure></p>
+<p>这里先让 elf_open 和 elf_release 两个函数返回空值<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">int</span> <span class="title">elf_open</span><span class="params">(struct block_device *bdev, <span class="keyword">fmode_t</span> mode)</span></span></span><br><span class="line"><span class="function"></span>&#123;</span><br><span class="line">     <span class="keyword">return</span> <span class="number">0</span>;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="function"><span class="keyword">static</span> <span class="keyword">void</span> <span class="title">elf_release</span><span class="params">(struct gendisk *disk, <span class="keyword">fmode_t</span> mode)</span> </span>&#123; &#125;</span><br></pre></td></tr></table></figure></p>
+<p>通过 register_blkdev 注册一个新的设备类型<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">elf_major = register_blkdev(<span class="number">0</span>, <span class="string">"darkelf"</span>);</span><br></pre></td></tr></table></figure></p>
+<p>初始化块设备和请求队列<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">darkelf-&gt;disk = alloc_disk(<span class="number">16</span>);</span><br><span class="line"><span class="keyword">if</span> (!darkelf-&gt;disk) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> free_group;</span><br><span class="line">&#125;</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span> = blk_alloc_queue_node(GFP_KERNEL, NUMA_NO_NODE);</span><br><span class="line"><span class="keyword">if</span> (!darkelf-&gt;<span class="built_in">queue</span>) &#123;</span><br><span class="line">        ret = -ENOMEM;</span><br><span class="line">        <span class="keyword">goto</span> free_disk;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>对请求队列和块设备实例进行初始化<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">blk_queue_make_request(darkelf-&gt;<span class="built_in">queue</span>, elf_queue_bio);</span><br><span class="line">BUG_ON(!darkelf-&gt;<span class="built_in">queue</span>);</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span>-&gt;nr_queues = <span class="number">1</span>;</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span>-&gt;queuedata = darkelf;</span><br><span class="line"></span><br><span class="line">queue_flag_set_unlocked(QUEUE_FLAG_NONROT, darkelf-&gt;<span class="built_in">queue</span>);</span><br><span class="line">queue_flag_clear_unlocked(QUEUE_FLAG_ADD_RANDOM, darkelf-&gt;<span class="built_in">queue</span>);</span><br><span class="line">blk_queue_logical_block_size(darkelf-&gt;<span class="built_in">queue</span>, <span class="number">512</span>);</span><br><span class="line">blk_queue_physical_block_size(darkelf-&gt;<span class="built_in">queue</span>, <span class="number">512</span>);</span><br><span class="line"></span><br><span class="line"><span class="built_in">strncpy</span>(darkelf-&gt;disk-&gt;disk_name, <span class="string">"darkelf"</span>, DISK_NAME_LEN);</span><br><span class="line">darkelf-&gt;disk-&gt;flags = GENHD_FL_EXT_DEVT;</span><br><span class="line">darkelf-&gt;disk-&gt;major = elf_major;</span><br><span class="line">darkelf-&gt;disk-&gt;first_minor = <span class="number">7</span>;</span><br><span class="line">darkelf-&gt;disk-&gt;fops = &amp;elf_fops;</span><br><span class="line">darkelf-&gt;disk-&gt;<span class="built_in">queue</span> = darkelf-&gt;<span class="built_in">queue</span>;</span><br><span class="line">darkelf-&gt;disk-&gt;private_data = (<span class="keyword">void</span>*)darkelf;</span><br><span class="line">darkelf-&gt;<span class="built_in">queue</span>-&gt;queuedata = (<span class="keyword">void</span>*)darkelf;</span><br><span class="line">set_capacity(darkelf-&gt;disk, <span class="number">1024</span>);</span><br></pre></td></tr></table></figure></p>
+<p>通过 add_disk 将块设备实例插入内核<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">add_disk(darkelf-&gt;disk);</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="编译并测试块设备"><a href="#编译并测试块设备" class="headerlink" title="编译并测试块设备"></a>编译并测试块设备</h2><p>编译所需要的 Makefile 采用实验二的 Makefile，执行 make 后，将生成 darkelf.ko，然后通过 insmod darkelf.ko 将该模块插入内核中。首先查看 /dev 下面我们插进去的模块：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;dev&gt;ls -lah /dev | grep darkelf</span><br><span class="line">brw-------  1 root root      249,   0 Apr 25 17:15 darkelf</span><br></pre></td></tr></table></figure></p>
+<p>通过 lsblk 查看块设备：<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">root@AE86_&lt;dev&gt;lsblk</span><br><span class="line">NAME     MAJ:MIN 	RM 	SIZE 	RO 	TYPE 	MOUNTPOINT</span><br><span class="line">sda        8:0    	0  	50G  	0 	disk</span><br><span class="line">└─sda1     8:1   	0  	50G  	0 	part 	/</span><br><span class="line">darkelf  249:7		0	512K	0	disk</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="答疑补充"><a href="#答疑补充" class="headerlink" title="答疑补充"></a>答疑补充</h2><h4 id="Makefile-编写的注意事项"><a href="#Makefile-编写的注意事项" class="headerlink" title="Makefile 编写的注意事项"></a>Makefile 编写的注意事项</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1733982065.jpg" alt="20181130202337.jpg"><br>!!!<br></center><br>!!!</p>
+<h4 id="模块验证失败警告的处理"><a href="#模块验证失败警告的处理" class="headerlink" title="模块验证失败警告的处理"></a>模块验证失败警告的处理</h4><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">[   276.204699] darkelf: module verification failed: signature and/or required ....</span><br></pre></td></tr></table></figure>
+<p>Makefile 中加入下面语句关闭验证<br><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">CONFIG_MODULE_SIG=n</span><br></pre></td></tr></table></figure></p>
+<h4 id="文件内核版本与当前内核版本不一致的问题"><a href="#文件内核版本与当前内核版本不一致的问题" class="headerlink" title="文件内核版本与当前内核版本不一致的问题"></a>文件内核版本与当前内核版本不一致的问题</h4><ol>
+<li>内核版本不一样<ul>
+<li>切换当前内核版本为源码的内核版本</li>
+<li>或将链接的内核源码改成与当前内核版本相同的源码</li>
+</ul>
+</li>
+<li>内核版本相同，但只人为修改了版本号<ul>
+<li>将源码版本号修改回来再编译</li>
+</ul>
+</li>
+</ol>
+<p>例如：linux-4.4.128-20154043 修改回 linux-4.4.128</p>
+<h4 id="编译问题————在-Ubuntu-下编译内核的各种依赖问题"><a href="#编译问题————在-Ubuntu-下编译内核的各种依赖问题" class="headerlink" title="编译问题————在 Ubuntu 下编译内核的各种依赖问题"></a>编译问题————在 Ubuntu 下编译内核的各种依赖问题</h4><ol>
+<li>安装 ncurses 库失败<ul>
+<li>首先，安装 ncurses 库的目的————使用 make menuconfig 时以可视化的方式进行编译选项的选择。事实上这种方式很鸡肋。解决方法：不用安装 ncurses 库，使用 make oldconfig 进行编译选项的选择，配合当前系统中已有的 .config，可以直接一路回车键默认选过去。需要修改某个模块的编译选项时，可以直接用编辑器编辑 .config 文件。</li>
+</ul>
+</li>
+<li><p>使用 make-kpkg 工具</p>
+<ul>
+<li><p>不需要安装这个工具，直接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">make modules_install &amp; make install</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>若要清理中间文件，可以直接：</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">make clean</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+</li>
+<li><p>修改 grub 文件</p>
+<ul>
+<li>不需要</li>
+</ul>
+</li>
+</ol>
+<h4 id="一图流编译总结！！！"><a href="#一图流编译总结！！！" class="headerlink" title="一图流编译总结！！！"></a>一图流编译总结！！！</h4><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/1820028190.jpg" alt="20181130202338.jpg"><br>!!!<br></center><br>!!!</p>
+<p>（完）</p>
+
+  	</div>
+
+	  <div class="article-tags tags">
+		  
+	  </div>
+	</section>
+</article>
+
+
+
+
+      <script>setLoadingBarProgress(60);</script>
+    </main>
+    
+    <footer id="footer" class="clearfix">
+  
+  
+
+	<div class="social-wrapper">
+  	
+      
+        <a href="mailto:root@xxiong.me" class="social email" target="_blank" rel="external">
+          <span class="icon icon-email"></span>
+        </a>
+      
+        <a href="https://github.com/gnekiah" class="social github" target="_blank" rel="external">
+          <span class="icon icon-github"></span>
+        </a>
+      
+        <a href="https://twitter.com/gnekiah" class="social twitter" target="_blank" rel="external">
+          <span class="icon icon-twitter"></span>
+        </a>
+      
+    
+  </div>
+  
+  <div>Theme <span class="codename">Typescript</span> designed by <a href="http://rakugaki.me/" target="_blank">Art Chen</a>.</div>
+  <div>&copy; <a href="/">Gnekiah&#39;s Serenice</a></div>
+  
+</footer>
+
+
+    <script>setLoadingBarProgress(80);</script>
+    
+  </div>
+
+  
+
+
+
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script>window.jQuery || document.write('<script src="/js/jquery.min.js"><\/script>')</script>
+
+<script src="/js/jquery.fitvids.js"></script>
+<script>
+	var GOOGLE_CUSTOM_SEARCH_API_KEY = "";
+	var GOOGLE_CUSTOM_SEARCH_ENGINE_ID = "";
+	var ALGOLIA_API_KEY = "";
+	var ALGOLIA_APP_ID = "";
+	var ALGOLIA_INDEX_NAME = "";
+  var AZURE_SERVICE_NAME = "";
+  var AZURE_INDEX_NAME = "";
+  var AZURE_QUERY_KEY = "";
+  var BAIDU_API_ID = "";
+  var SEARCH_SERVICE = "google";
+</script>
+<script src="/js/search.js"></script>
+<script src="/js/app.js"></script>
+
+
+  <script>setLoadingBarProgress(100);</script>
+  
+</body>
+</html>

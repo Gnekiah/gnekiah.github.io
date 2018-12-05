@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  
+  <title>LightNVM 自顶向下的 IO 通路简析 | Gnekiah&#39;s Serenice</title>
+  <meta name="description" content="Just write something casually.">
+  <meta name="keywords" content="">
+  <meta name="HandheldFriendly" content="True">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="这篇 IO 通路简析主要偏向于模块之间的衔接，不涉及模块内的细节，主要回答下面的 4 个问题：  在何处向请求队列注册 make request function 函数（这里是 pblk_make_rq） 在何处调用了（1）注册的 make request function 函数 在何处向请求队列注册了 request function 函数（这里是 pci.c 中的 nvme_queue_rq）">
+<meta property="og:type" content="article">
+<meta property="og:title" content="LightNVM 自顶向下的 IO 通路简析">
+<meta property="og:url" content="http://spiral.xxiong.me/2018/12/05/LightNVM-IO-analysis/index.html">
+<meta property="og:site_name" content="Gnekiah&#39;s Serenice">
+<meta property="og:description" content="这篇 IO 通路简析主要偏向于模块之间的衔接，不涉及模块内的细节，主要回答下面的 4 个问题：  在何处向请求队列注册 make request function 函数（这里是 pblk_make_rq） 在何处调用了（1）注册的 make request function 函数 在何处向请求队列注册了 request function 函数（这里是 pci.c 中的 nvme_queue_rq）">
+<meta property="og:locale" content="default">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/2538886641.jpg">
+<meta property="og:image" content="http://blog.xxiong.me/usr/uploads/2018/12/4293740320.png">
+<meta property="og:updated_time" content="2018-12-05T03:17:26.120Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="LightNVM 自顶向下的 IO 通路简析">
+<meta name="twitter:description" content="这篇 IO 通路简析主要偏向于模块之间的衔接，不涉及模块内的细节，主要回答下面的 4 个问题：  在何处向请求队列注册 make request function 函数（这里是 pblk_make_rq） 在何处调用了（1）注册的 make request function 函数 在何处向请求队列注册了 request function 函数（这里是 pci.c 中的 nvme_queue_rq）">
+<meta name="twitter:image" content="http://blog.xxiong.me/usr/uploads/2018/12/2538886641.jpg">
+  
+  
+    <link rel="icon" href="http://www.xxiong.me/favicon.png">
+  
+
+	<script src="https://use.typekit.net/eyf3hir.js"></script>
+  <script>try{Typekit.load({ async: false });}catch(e){}</script>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    function setLoadingBarProgress(num) {
+      document.getElementById('loading-bar').style.width=num+"%";
+    }
+  </script>
+  
+
+</head>
+</html>
+<body>
+  
+  <div id="loading-bar-wrapper">
+  <div id="loading-bar"></div>
+</div>
+
+  <script>setLoadingBarProgress(20)</script>
+  
+  <div id="site-wrapper">
+    
+    <header id="header">
+	<div id="header-wrapper" class="clearfix">
+		<a id="logo" href="/">
+			<img src="/images/logo.png">
+			<span id="site-desc">
+			  很随便的，写点儿东西。
+      </span>
+		</a>
+		<button id="site-nav-switch">
+	    <span class="icon icon-menu"></span>
+	  </button>
+	</div>
+	<aside id="site-menu">
+  	<nav>
+  		
+        <a href="/" class="nav-index nav">
+          首页
+        </a>
+      
+        <a href="/archives" class="nav-archives nav">
+          目录
+        </a>
+      
+        <a href="http://blog.xxiong.me/" class="nav-blog nav">
+          博客
+        </a>
+      
+        <a href="http://blog.xxiong.me/about.html" class="nav-about nav">
+          关于
+        </a>
+      
+        <a href="http://www.xxiong.me" class="nav-home nav">
+          主页
+        </a>
+      
+    </nav>
+	</aside>
+</header>
+    <script>setLoadingBarProgress(40);</script>
+    
+    <main id="main" role="main">
+      <article id="post-LightNVM-IO-analysis" class="post article white-box article-type-post" itemscope="" itemprop="blogPost">
+	<h2 class="title">
+  	<a href="/2018/12/05/LightNVM-IO-analysis/">
+    	LightNVM 自顶向下的 IO 通路简析
+    </a>
+  </h2>
+	<time>
+	  Dec 5, 2018
+	</time>
+	<section class="content">
+  	<div class="article-entry" itemprop="articleBody">
+    	<p>这篇 IO 通路简析主要偏向于模块之间的衔接，不涉及模块内的细节，主要回答下面的 4 个问题：</p>
+<ol>
+<li>在何处向请求队列注册 make request function 函数（这里是 pblk_make_rq）</li>
+<li>在何处调用了（1）注册的 make request function 函数</li>
+<li>在何处向请求队列注册了 request function 函数（这里是 pci.c 中的 nvme_queue_rq）</li>
+<li>在何处调用了（3）注册的 request function 函数</li>
+</ol>
+<hr>
+<h2 id="LightNVM-两个模块及入口的说明"><a href="#LightNVM-两个模块及入口的说明" class="headerlink" title="LightNVM 两个模块及入口的说明"></a>LightNVM 两个模块及入口的说明</h2><p>LightNVM 中包含有两个模块——lightnvm subsystem 和 pblk。这两个模块的关系如下图中标红框处：<br>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/2538886641.jpg" alt="20181130202320.jpg"><br>!!!<br></center><br>!!!</p>
+<p>其中 lightnvm subsystem 的代码位于 /drivers/lightnvm/core.c 中，其使用如下方式初始化：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">builtin_misc_device(_nvm_misc);</span><br></pre></td></tr></table></figure></p>
+<p>在这个初始化中，定义了如下操作，其中标红的函数用于初始化 target（这里是 pblk 或 rrpc）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">file_operations</span> _<span class="title">ctl_fops</span> = &#123;</span></span><br><span class="line">.open           = nonseekable_open,</span><br><span class="line">.unlocked_ioctl = nvm_ctl_ioctl,</span><br><span class="line">.owner          = THIS_MODULE,</span><br><span class="line">.llseek         = noop_llseek,</span><br></pre></td></tr></table></figure></p>
+<p>模块入口说明——pblk模块入口函数有以下六个：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">.make_rq    = pblk_make_rq,</span><br><span class="line">.capacity   = pblk_capacity,</span><br><span class="line">.init       = pblk_init,</span><br><span class="line">.<span class="built_in">exit</span>       = pblk_exit,</span><br><span class="line">.sysfs_init = pblk_sysfs_init,</span><br><span class="line">.sysfs_exit = pblk_sysfs_exit,</span><br></pre></td></tr></table></figure></p>
+<p>其中后面五个函数都只是在 nvm_create_tgt 函数或者 __nvm_remove_tgt 中被调用。关于 pblk_make_rq 函数的说明见下一节。</p>
+<hr>
+<h2 id="pblk-make-rq-相关说明（向请求队列注册-pblk-make-rq）"><a href="#pblk-make-rq-相关说明（向请求队列注册-pblk-make-rq）" class="headerlink" title="pblk_make_rq 相关说明（向请求队列注册 pblk_make_rq）"></a>pblk_make_rq 相关说明（向请求队列注册 pblk_make_rq）</h2><p>操作系统为每个块设备维护一个 request queue。当一个支持 lightnvm 的 nvme 设备被识别到后，lightnvm 模块将会为 nvme device driver 创建 target，每个 target 由两部分组成——属于一个 target 的内存空间和针对该内存空间的操作（其中定义的操作是同类型 target 共享的）。<br>这里创建 target 是通过调用第一章节中提到的函数 nvm_ctl_ioctl 实现的。在该函数间接调用的 nvm_create_tgt 中有一步操作如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">tqueue = blk_alloc_queue_node(GFP_KERNEL, dev-&gt;q-&gt;node);</span><br><span class="line">blk_queue_make_request(tqueue, tt-&gt;make_rq);</span><br></pre></td></tr></table></figure></p>
+<p>通过这两段代码，将 pblk 模块的入口函数 pblk_make_rq（即 make request function）插入到内核为该 pblk 对应的 nvme device 分区维护的请求队列中。</p>
+<hr>
+<h2 id="当-IO-请求下来时的操作（如何调用-pblk-make-rq）"><a href="#当-IO-请求下来时的操作（如何调用-pblk-make-rq）" class="headerlink" title="当 IO 请求下来时的操作（如何调用 pblk_make_rq）"></a>当 IO 请求下来时的操作（如何调用 pblk_make_rq）</h2><ol>
+<li>当一个请求下来后，首先执行 bio_alloc() 用于分配一个新的 bio，之后初始化 bio 描述符。</li>
+<li>bio 初始化完毕后，内核调用 generic_make_request() 函数，这是通用块层的主要入口点。在该函数中：<ul>
+<li>首先调用 bdev_get_queue() 获取与请求的块设备相关的请求队列 rq</li>
+<li>之后调用 rq-&gt;make_request_fn() 将 bio 请求插入请求队列 rq 中</li>
+</ul>
+</li>
+<li>上一步中的 make_request_fn()（即 pblk_make_rq）在 target 初始化的时候已经插入到该请求队列中，因此调用这一步后就进入 lightnvm 模块中。lightnvm 模块与设备驱动相关的代码位于路径 /drivers/nvme/lightnvm.c 中。</li>
+</ol>
+<hr>
+<h2 id="NVMe-向请求队列中注册-request-function（nvme-queue-rq）"><a href="#NVMe-向请求队列中注册-request-function（nvme-queue-rq）" class="headerlink" title="NVMe 向请求队列中注册 request function（nvme_queue_rq）"></a>NVMe 向请求队列中注册 request function（nvme_queue_rq）</h2><p>nvme 为 namespace 初始化 request queue 的操作：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns() &#123;		<span class="comment">//入口函数</span></span><br><span class="line">    <span class="comment">// 其中包含下面这一步操作，用于初始化一个request queue</span></span><br><span class="line">    ns-&gt;<span class="built_in">queue</span> = blk_mq_init_queue(ctrl-&gt;tagset);</span><br></pre></td></tr></table></figure></p>
+<p> 在该函数（blk_mq_init_queue）中调用了另一个函数如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">blk_mq_init_allocated_queue() &#123;</span><br><span class="line">    <span class="comment">// 向request queue中插入nvme的操作函数</span></span><br><span class="line">    q-&gt;mq_ops = <span class="built_in">set</span>-&gt;ops;</span><br></pre></td></tr></table></figure></p>
+<p>其中 nvme 模块的 pci.c 文件中定义了操作入口：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="keyword">const</span> <span class="class"><span class="keyword">struct</span> <span class="title">blk_mq_ops</span> <span class="title">nvme_mq_ops</span> = &#123;</span></span><br><span class="line">    .queue_rq     = nvme_queue_rq,</span><br><span class="line">    .complete     = nvme_pci_complete_rq,</span><br><span class="line">    .init_hctx    = nvme_init_hctx,</span><br><span class="line">    .init_request = nvme_init_request,</span><br><span class="line">    .map_queues   = nvme_pci_map_queues,</span><br><span class="line">    .timeout      = nvme_timeout,</span><br><span class="line">    .poll         = nvme_poll,</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="当-lightnvm-模块处理完成后（如何调用-nvme-queue-rq）"><a href="#当-lightnvm-模块处理完成后（如何调用-nvme-queue-rq）" class="headerlink" title="当 lightnvm 模块处理完成后（如何调用 nvme_queue_rq）"></a>当 lightnvm 模块处理完成后（如何调用 nvme_queue_rq）</h2><p>当 lightnvm 模块中与设备驱动相关的逻辑执行完后，lightnvm（nvme/host/lightnvm.c）将会调用 blk_execute_rq_nowait() 函数将请求交由通用块层处理。该函数部分代码如下：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">blk_execute_rq_nowait() &#123;</span><br><span class="line">    <span class="keyword">if</span> (q-&gt;mq_ops) &#123;</span><br><span class="line">        blk_mq_sched_insert_request(rq, at_head, <span class="literal">true</span>, <span class="literal">false</span>, <span class="literal">false</span>);</span><br><span class="line">            <span class="keyword">return</span>;</span><br></pre></td></tr></table></figure></p>
+<p><del>这里有个误导性的地方：不仔细看的话，会以为调用了 <strong>blk_run_queue(q)，而该函数会调用 </strong>blk_run_queue_uncond()</del></p>
+<p>继续上面的话题，blk_mq_sched_insert_request() 函数中有如下调用：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">blk_mq_sched_insert_request() &#123;</span><br><span class="line">    blk_mq_run_hw_queue(hctx, async);</span><br><span class="line">blk_mq_run_hw_queue() &#123;</span><br><span class="line">    __blk_mq_delay_run_hw_queue(hctx, async, <span class="number">0</span>);</span><br><span class="line">__blk_mq_delay_run_hw_queue() &#123;</span><br><span class="line">    __blk_mq_run_hw_queue(hctx);</span><br><span class="line">__blk_mq_run_hw_queue() &#123;</span><br><span class="line">    blk_mq_sched_dispatch_requests(hctx);</span><br><span class="line">blk_mq_sched_dispatch_requests() &#123;</span><br><span class="line">    blk_mq_dispatch_rq_list(q, &amp;rq_list);</span><br><span class="line">blk_mq_dispatch_rq_list() &#123;</span><br><span class="line">    <span class="comment">// 这里调用了nvme模块中的nvme_queue_rq</span></span><br><span class="line">    ret = q-&gt;mq_ops-&gt;queue_rq(hctx, &amp;bd);</span><br></pre></td></tr></table></figure></p>
+<p>题外话：其中这里涉及到的请求队列 q 是属于 nvm_dev 结构体中指向的 request queue，其声明在 /include/linux/lightnvm.h 中。nvm_dev 结构体中的 request queue 指针的赋值操作位于文件 /drivers/nvme/lightnvm.c 中的 nvme_nvm_register() 函数中。如下面代码段所示：<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">request_queue</span> *<span class="title">q</span> = <span class="title">ns</span>-&gt;<span class="title">queue</span>;</span></span><br><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">nvm_dev</span> *<span class="title">dev</span>;</span></span><br><span class="line">dev-&gt;q = q;</span><br></pre></td></tr></table></figure></p>
+<p>补充：以下是 nvme 模块注册 request_queue 时的操作，可以看到这里的 request_queue 的默认 make request 函数是 blk_mq_make_request() 函数（后面会被 pblk_make_rq 覆盖）<br><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">nvme_alloc_ns()                         <span class="comment">// drivers/nvme/host/core.c</span></span><br><span class="line">    ns-&gt;<span class="built_in">queue</span> = blk_mq_init_queue(ctrl-&gt;tagset);</span><br><span class="line">blk_mq_init_queue()                     <span class="comment">// block/blk-mq.c</span></span><br><span class="line">    q = blk_mq_init_allocated_queue(<span class="built_in">set</span>, uninit_q);</span><br><span class="line">blk_mq_init_allocated_queue()           <span class="comment">// block/blk-mq.c</span></span><br><span class="line">    blk_queue_make_request(q, blk_mq_make_request);</span><br><span class="line">blk_queue_make_request()                <span class="comment">// block/blk-settings.c</span></span><br><span class="line">    q-&gt;make_request_fn = mfn;</span><br></pre></td></tr></table></figure></p>
+<hr>
+<h2 id="NVMe-驱动激活-LightNVM-的操作"><a href="#NVMe-驱动激活-LightNVM-的操作" class="headerlink" title="NVMe 驱动激活 LightNVM 的操作"></a>NVMe 驱动激活 LightNVM 的操作</h2><h4 id="注册-lightnvm，通过调用-nvme-nvm-register-实现"><a href="#注册-lightnvm，通过调用-nvme-nvm-register-实现" class="headerlink" title="注册 lightnvm，通过调用 nvme_nvm_register() 实现"></a>注册 lightnvm，通过调用 nvme_nvm_register() 实现</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (nvme_nvm_ns_supported(ns, id) &amp;&amp; nvme_nvm_register(ns, disk_name, node)) &#123;</span><br><span class="line">        dev_warn(ctrl-&gt;dev, <span class="string">"%s: LightNVM init failure\n"</span>, __func__);</span><br><span class="line">        <span class="keyword">goto</span> out_free_id;</span><br></pre></td></tr></table></figure>
+<h4 id="注销-lightnvm，通过调用-nvme-nvm-unregister-实现"><a href="#注销-lightnvm，通过调用-nvme-nvm-unregister-实现" class="headerlink" title="注销 lightnvm，通过调用 nvme_nvm_unregister() 实现"></a>注销 lightnvm，通过调用 nvme_nvm_unregister() 实现</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_free_ns()</span><br><span class="line"><span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">    nvme_nvm_unregister(ns);</span><br></pre></td></tr></table></figure>
+<h4 id="注册-lightnvm-sysfs，通过调用-nvme-nvm-register-sysfs"><a href="#注册-lightnvm-sysfs，通过调用-nvme-nvm-register-sysfs" class="headerlink" title="注册 lightnvm_sysfs，通过调用 nvme_nvm_register_sysfs()"></a>注册 lightnvm_sysfs，通过调用 nvme_nvm_register_sysfs()</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (ns-&gt;ndev &amp;&amp; nvme_nvm_register_sysfs(ns))</span><br><span class="line">        pr_warn(<span class="string">"%s: failed to register lightnvm sysfs group for identification\n"</span>, ns-&gt;disk-&gt;disk_name);</span><br></pre></td></tr></table></figure>
+<h4 id="注销-lightnvm-sysfs，通过-nvme-nvm-unregister-sysfs"><a href="#注销-lightnvm-sysfs，通过-nvme-nvm-unregister-sysfs" class="headerlink" title="注销 lightnvm_sysfs，通过 nvme_nvm_unregister_sysfs()"></a>注销 lightnvm_sysfs，通过 nvme_nvm_unregister_sysfs()</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_ns_remove()</span><br><span class="line">    <span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">        nvme_nvm_unregister_sysfs(ns);</span><br></pre></td></tr></table></figure>
+<h4 id="nvme-nvm-ns-supported"><a href="#nvme-nvm-ns-supported" class="headerlink" title="nvme_nvm_ns_supported"></a>nvme_nvm_ns_supported</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_alloc_ns()</span><br><span class="line">    <span class="keyword">if</span> (nvme_nvm_ns_supported(ns, id) &amp;&amp; nvme_nvm_register(ns, disk_name, node)) &#123;</span><br><span class="line">        dev_warn(ctrl-&gt;dev, <span class="string">"%s: LightNVM init failure\n"</span>, __func__);</span><br><span class="line">        <span class="keyword">goto</span> out_free_id;</span><br></pre></td></tr></table></figure>
+<h4 id="nvme-nvm-ioctl"><a href="#nvme-nvm-ioctl" class="headerlink" title="nvme_nvm_ioctl"></a>nvme_nvm_ioctl</h4><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">nvme/host/core.c</span><br><span class="line">nvme_ioctl()</span><br><span class="line">    <span class="meta">#<span class="meta-keyword">ifdef</span> CONFIG_NVM</span></span><br><span class="line">        <span class="keyword">if</span> (ns-&gt;ndev)</span><br><span class="line">            <span class="keyword">return</span> nvme_nvm_ioctl(ns, cmd, arg);</span><br><span class="line">    <span class="meta">#<span class="meta-keyword">endif</span></span></span><br></pre></td></tr></table></figure>
+<hr>
+<h2 id="一图流总结"><a href="#一图流总结" class="headerlink" title="一图流总结"></a>一图流总结</h2><p>!!!</p>
+<p><center><br>!!!<br><img src="http://blog.xxiong.me/usr/uploads/2018/12/4293740320.png" alt="20181130202330.png"><br>!!!<br></center><br>!!!<br>Lightnvm 分别通过用 pblk_make_rq() 替换原始的 generic_make_request() 从而接收 block layer 下发的请求和向下调用 nvme_queue_rq() 从而将请求传递给驱动程序的方式，实现将自身插入到原生的 IO 栈中。</p>
+<p>（完）</p>
+
+  	</div>
+
+	  <div class="article-tags tags">
+		  
+	  </div>
+	</section>
+</article>
+
+
+
+
+      <script>setLoadingBarProgress(60);</script>
+    </main>
+    
+    <footer id="footer" class="clearfix">
+  
+  
+
+	<div class="social-wrapper">
+  	
+      
+        <a href="mailto:root@xxiong.me" class="social email" target="_blank" rel="external">
+          <span class="icon icon-email"></span>
+        </a>
+      
+        <a href="https://github.com/gnekiah" class="social github" target="_blank" rel="external">
+          <span class="icon icon-github"></span>
+        </a>
+      
+        <a href="https://twitter.com/gnekiah" class="social twitter" target="_blank" rel="external">
+          <span class="icon icon-twitter"></span>
+        </a>
+      
+    
+  </div>
+  
+  <div>Theme <span class="codename">Typescript</span> designed by <a href="http://rakugaki.me/" target="_blank">Art Chen</a>.</div>
+  <div>&copy; <a href="/">Gnekiah&#39;s Serenice</a></div>
+  
+</footer>
+
+
+    <script>setLoadingBarProgress(80);</script>
+    
+  </div>
+
+  
+
+
+
+<script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+<script>window.jQuery || document.write('<script src="/js/jquery.min.js"><\/script>')</script>
+
+<script src="/js/jquery.fitvids.js"></script>
+<script>
+	var GOOGLE_CUSTOM_SEARCH_API_KEY = "";
+	var GOOGLE_CUSTOM_SEARCH_ENGINE_ID = "";
+	var ALGOLIA_API_KEY = "";
+	var ALGOLIA_APP_ID = "";
+	var ALGOLIA_INDEX_NAME = "";
+  var AZURE_SERVICE_NAME = "";
+  var AZURE_INDEX_NAME = "";
+  var AZURE_QUERY_KEY = "";
+  var BAIDU_API_ID = "";
+  var SEARCH_SERVICE = "google";
+</script>
+<script src="/js/search.js"></script>
+<script src="/js/app.js"></script>
+
+
+  <script>setLoadingBarProgress(100);</script>
+  
+</body>
+</html>
